@@ -858,6 +858,25 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     super.dispose();
   }
 
+  // ─── [SF-8] Nestify patch: timeline query forward ──────────────────────
+  //
+  // Forward 3 public query methods to the current view's _CalendarViewState
+  // (_currentChildIndex==1). Returns null for non-timeline views or when
+  // the current view state isn't mounted yet.
+
+  DateTime? queryTimeForGlobalY(double globalY) {
+    return _currentViewKey.currentState?.queryTimeForGlobalY(globalY);
+  }
+
+  DateTime? queryDateForGlobalX(double globalX) {
+    return _currentViewKey.currentState?.queryDateForGlobalX(globalX);
+  }
+
+  SfCalendarEmptySlotQueryResult? queryEmptySlotAt(Offset globalPos) {
+    return _currentViewKey.currentState?.queryEmptySlotAt(globalPos);
+  }
+  // ─── end SF-8 patch ────────────────────────────────────────────────────
+
   void _handleAppointmentDragStart(
     AppointmentView appointmentView,
     bool isTimelineView,
@@ -6551,6 +6570,11 @@ class _CalendarViewState extends State<_CalendarView>
           /* Animates the all day panel height when
               expanding or collapsing */
         });
+        // [SF-8] Nestify patch: push timeline coords during all-day animation.
+        final bool isCurrentView =
+            _updateCalendarStateDetails.currentViewVisibleDates ==
+                widget.visibleDates;
+        _pushTimelineCoordinates(isCurrentView);
       });
 
       _expanderAnimationController = AnimationController(
@@ -6717,6 +6741,9 @@ class _CalendarViewState extends State<_CalendarView>
 
     _timer ??= _createTimer();
     super.didUpdateWidget(oldWidget);
+    // [SF-8] Nestify patch: push timeline coords after view / intervalH change.
+    // Reuses isCurrentView already declared earlier in this function.
+    _pushTimelineCoordinates(isCurrentView);
   }
 
   @override
@@ -6739,6 +6766,143 @@ class _CalendarViewState extends State<_CalendarView>
         return _getTimelineView();
     }
   }
+
+  // ─── [SF-8] Nestify patch: timeline coordinate push + query ────────────
+  //
+  // 详见 README.nestify.md / PATCHES.md SF-8 条目。
+  // - _pushTimelineCoordinates: 在 4 个 layout 真值变化点调用，构造 snapshot
+  //   并 forward 给 _SfCalendarState._dispatchTimelineCoordinatesToHost。
+  //   仅 isCurrentView=true 实例 fire；非 current 实例 short-circuit。
+  // - 3 个 public query method（queryTimeForGlobalY / queryDateForGlobalX /
+  //   queryEmptySlotAt）由 _CustomCalendarScrollViewState forward 调用，
+  //   把 global pointer 反算到 calendar 内时间 / 日期。
+  // - 跨 library 调用 forward 时用 `dynamic` cast 访问私有 State 的 public
+  //   method（同 library 私有访问受限）。
+
+  void _pushTimelineCoordinates(bool isCurrentView) {
+    if (!isCurrentView) return;
+    final ScrollController? scroll = _scrollController;
+    if (scroll == null || !scroll.hasClients) return;
+    final ScrollPosition pos = scroll.position;
+    if (!pos.hasPixels) return;
+
+    final void Function(SfCalendarTimelineCoordinates)? hostCb =
+        widget.calendar.onTimelineCoordinatesChanged;
+    if (hostCb == null) return;
+
+    final bool isDayView = CalendarViewHelper.isDayView(
+      widget.view,
+      widget.calendar.timeSlotViewSettings.numberOfDaysInView,
+      widget.calendar.timeSlotViewSettings.nonWorkingDays,
+      widget.calendar.monthViewSettings.numberOfWeeksInView,
+    );
+    final double viewHeaderHeight = CalendarViewHelper.getViewHeaderHeight(
+      widget.calendar.viewHeaderHeight,
+      widget.view,
+    );
+    final double timeLabelWidth = CalendarViewHelper.getTimeLabelWidth(
+      widget.calendar.timeSlotViewSettings.timeRulerSize,
+      widget.view,
+    );
+    final double pinnedAllDay = isDayView ? 0 : _allDayHeight;
+    final int columns = math.max(1, widget.visibleDates.length);
+    final double viewportTopInBody = viewHeaderHeight + pinnedAllDay;
+    final double viewportWidthPerColumn =
+        (widget.width - timeLabelWidth) / columns;
+    final SfCalendarTimelineCoordinates coords =
+        SfCalendarTimelineCoordinates(
+      viewportTopInBody: viewportTopInBody,
+      scrollOffset: pos.pixels,
+      intervalHeight: _timeIntervalHeight,
+      pinnedAllDayHeight: pinnedAllDay,
+      visibleDates: widget.visibleDates,
+      viewportWidth: viewportWidthPerColumn,
+      viewportHeight: pos.viewportDimension,
+      maxScrollExtent: pos.maxScrollExtent,
+    );
+
+    // Forward to _SfCalendarState (cross-library): host callback wrapping in
+    // postFrame happens there. Method name is public (not _-prefixed)
+    // because Dart's library-private members aren't accessible via `dynamic`
+    // across libraries.
+    final State<SfCalendar>? sfState =
+        context.findAncestorStateOfType<State<SfCalendar>>();
+    if (sfState == null) return;
+    // ignore: avoid_dynamic_calls
+    (sfState as dynamic).dispatchTimelineCoordinatesToHostInternal(coords);
+  }
+
+  /// Convert global Y → SfCalendar-local Y → time-of-day via
+  /// [_getDateFromPosition].
+  ///
+  /// Only meaningful for day / week / workWeek (timeslot) views. Returns
+  /// null when the view is outside this set, or when the global position
+  /// is outside the view body, or when scroll has not initialised.
+  DateTime? queryTimeForGlobalY(double globalY) {
+    if (widget.view != CalendarView.day &&
+        widget.view != CalendarView.week &&
+        widget.view != CalendarView.workWeek) {
+      return null;
+    }
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return null;
+    final Offset local = box.globalToLocal(Offset(0, globalY));
+    final double timeLabelWidth = CalendarViewHelper.getTimeLabelWidth(
+      widget.calendar.timeSlotViewSettings.timeRulerSize,
+      widget.view,
+    );
+    return _getDateFromPosition(timeLabelWidth + 1, local.dy, timeLabelWidth);
+  }
+
+  DateTime? queryDateForGlobalX(double globalX) {
+    if (widget.view != CalendarView.day &&
+        widget.view != CalendarView.week &&
+        widget.view != CalendarView.workWeek) {
+      return null;
+    }
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return null;
+    final Offset local = box.globalToLocal(Offset(globalX, 0));
+    final double timeLabelWidth = CalendarViewHelper.getTimeLabelWidth(
+      widget.calendar.timeSlotViewSettings.timeRulerSize,
+      widget.view,
+    );
+    // y=1 just to land inside the body; the date is column-only.
+    final DateTime? result =
+        _getDateFromPosition(local.dx, 1, timeLabelWidth);
+    if (result == null) return null;
+    return DateTime(result.year, result.month, result.day);
+  }
+
+  SfCalendarEmptySlotQueryResult? queryEmptySlotAt(Offset globalPos) {
+    if (widget.view != CalendarView.day &&
+        widget.view != CalendarView.week &&
+        widget.view != CalendarView.workWeek) {
+      return null;
+    }
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return null;
+    final Offset local = box.globalToLocal(globalPos);
+    final double timeLabelWidth = CalendarViewHelper.getTimeLabelWidth(
+      widget.calendar.timeSlotViewSettings.timeRulerSize,
+      widget.view,
+    );
+    final DateTime? time =
+        _getDateFromPosition(local.dx, local.dy, timeLabelWidth);
+    if (time == null) return null;
+    final DateTime date = DateTime(time.year, time.month, time.day);
+    // Host hit-tests appointments via Syncfusion's own onLongPress / onTap
+    // callbacks (which pass appointment info when applicable), so query API
+    // intentionally does not attempt appointment hit-test here — it focuses
+    // on time/date reverse mapping.
+    return SfCalendarEmptySlotQueryResult(
+      time: time,
+      date: date,
+      localPosition: local,
+      isOnAppointment: false,
+    );
+  }
+  // ─── end SF-8 patch ────────────────────────────────────────────────────
 
   @override
   void dispose() {
@@ -7018,6 +7182,8 @@ class _CalendarViewState extends State<_CalendarView>
               : _updateCalendarStateDetails.allDayPanelHeight;
       _allDayHeight = _allDayHeight * _heightAnimation!.value;
     }
+    // [SF-8] Nestify patch: push timeline coords after all-day height update.
+    _pushTimelineCoordinates(isCurrentView);
   }
 
   Widget _getTimelineView() {
@@ -7321,6 +7487,13 @@ class _CalendarViewState extends State<_CalendarView>
 
       _timelineViewHeaderScrollController!.jumpTo(_scrollController!.offset);
     }
+    // [SF-8] Nestify patch: push timeline coords on scroll updates. Controller
+    // host-side does value-equality short-circuit; we don't gate by ScrollEnd
+    // here to keep coords fresh even during settling animations.
+    final bool isCurrentView =
+        _updateCalendarStateDetails.currentViewVisibleDates ==
+            widget.visibleDates;
+    _pushTimelineCoordinates(isCurrentView);
   }
 
   void _updateTimeSlotView(_CalendarView oldWidget) {

@@ -37,8 +37,11 @@ dependencies:
       
       
   syncfusion_localizations: ^33.2.8
-    
-      
-      
-      
 
+
+
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

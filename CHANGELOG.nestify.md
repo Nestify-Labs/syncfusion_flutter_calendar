@@ -2,6 +2,29 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.2 — SF-8 timeline coordinate push + query API
+
+Base: upstream `33.2.8`
+
+Adds SF-8 patch to support Nestify v1.5.0 calendar-coordinate-unification
+(`.feature/v1.5.0/calendar-coordinate-unification/`). SF-8 exposes timeline
+layout truth to the host without reflecting Syncfusion's private widget
+tree:
+
+- New value types: `SfCalendarTimelineCoordinates`,
+  `SfCalendarEmptySlotQueryResult`
+- New mixin: `SfCalendarTimelineQueryApi on State<SfCalendar>` (3 query methods)
+- New `SfCalendar.onTimelineCoordinatesChanged?` field (default null,
+  byte-identical when unused)
+- `_pushTimelineCoordinates` helper + 4 push call sites (`_updateAllDayHeight`
+  end / `_scrollListener` end / `didUpdateWidget` end / `_heightAnimation`
+  listener)
+- Auto `addPostFrameCallback` wrapping when fired during build / layout
+  phase, so host callback always runs in idle phase
+
+Backward compatible: callback null and unused query API → no behavioral
+change from v33.2.8+nestify.1.
+
 ## v33.2.8+nestify.1 — Upstream bump 32.1.23 → 33.2.8
 
 Base: upstream `33.2.8` (was `32.1.23`)

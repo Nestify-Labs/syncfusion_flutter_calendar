@@ -224,6 +224,7 @@ class SfCalendar extends StatefulWidget {
     this.onDragUpdate,
     this.onDragEnd,
     this.deferAppointmentDragOnLongPress = false,
+    this.onTimelineCoordinatesChanged,
   }) : assert(firstDayOfWeek >= 1 && firstDayOfWeek <= 7),
        assert(headerHeight >= 0),
        assert(viewHeaderHeight >= -1),
@@ -2099,6 +2100,29 @@ class SfCalendar extends StatefulWidget {
   /// `_handleLongPressStart`). Default `false` preserves upstream behavior.
   final bool deferAppointmentDragOnLongPress;
 
+  /// [SF-8] Nestify patch: push timeline coordinate snapshot to the host on
+  /// every layout-mutation point (all-day height change / scroll settle /
+  /// view-mode or intervalHeight change / all-day height animation tick).
+  ///
+  /// Only the **current** view instance fires (the left / right paged
+  /// instances do not), to avoid concurrent overwrites.
+  ///
+  /// Fires inside [SchedulerBinding.addPostFrameCallback] when invoked
+  /// during a build / layout phase, so the host callback always runs in idle
+  /// phase and can `setState` directly without further postFrame wrapping.
+  ///
+  /// Default `null` short-circuits the push; upstream behavior is preserved
+  /// byte-identically when the callback is not set. The host uses the
+  /// snapshot to render overlays (preview / time ruler / ghost / selected
+  /// highlight) aligned with Syncfusion's internal timeline coordinate
+  /// system without reflecting any private widget-tree state.
+  ///
+  /// See also [SfCalendarTimelineCoordinates] (the snapshot value type) and
+  /// [SfCalendarTimelineQueryApi] (command-style queries for pointer-driven
+  /// reverse mapping such as `globalY → time`).
+  final void Function(SfCalendarTimelineCoordinates coords)?
+  onTimelineCoordinatesChanged;
+
   /// Allows to customize the drag and drop environment.
   ///
   /// See also:
@@ -2743,7 +2767,7 @@ class SfCalendar extends StatefulWidget {
 }
 
 class _SfCalendarState extends State<SfCalendar>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, SfCalendarTimelineQueryApi {
   late List<DateTime> _currentViewVisibleDates;
   late DateTime _currentDate;
   DateTime? _selectedDate;
@@ -4086,6 +4110,78 @@ class _SfCalendarState extends State<SfCalendar>
     _focusNode.dispose();
     super.dispose();
   }
+
+  // ─── [SF-8] Nestify patch: SfCalendarTimelineQueryApi forward ──────────
+  //
+  // _customScrollViewKey.currentState 是 _CustomCalendarScrollViewState
+  // (calendar_view.dart 私有，跨 library 不可静态引用)。calendar_view.dart 已
+  // 为该 State 添加 3 个 public method (queryTimeForGlobalY 等)，本处用
+  // `dynamic` 调用 forward 跨 library 调用。命中失败（state 未挂载 / 视图非
+  // timeline / 坐标越界）返回 null 是契约。
+
+  @override
+  DateTime? queryTimeForGlobalY(double globalY) {
+    final State<StatefulWidget>? state = _customScrollViewKey.currentState;
+    if (state == null) return null;
+    // ignore: avoid_dynamic_calls
+    final dynamic dyn = state;
+    final Object? result = dyn.queryTimeForGlobalY(globalY) as Object?;
+    return result is DateTime ? result : null;
+  }
+
+  @override
+  DateTime? queryDateForGlobalX(double globalX) {
+    final State<StatefulWidget>? state = _customScrollViewKey.currentState;
+    if (state == null) return null;
+    // ignore: avoid_dynamic_calls
+    final dynamic dyn = state;
+    final Object? result = dyn.queryDateForGlobalX(globalX) as Object?;
+    return result is DateTime ? result : null;
+  }
+
+  @override
+  SfCalendarEmptySlotQueryResult? queryEmptySlotAt(Offset globalPosition) {
+    final State<StatefulWidget>? state = _customScrollViewKey.currentState;
+    if (state == null) return null;
+    // ignore: avoid_dynamic_calls
+    final dynamic dyn = state;
+    final Object? result = dyn.queryEmptySlotAt(globalPosition) as Object?;
+    return result is SfCalendarEmptySlotQueryResult ? result : null;
+  }
+
+  /// [SF-8] Nestify patch: re-export to host via callback.
+  ///
+  /// Called by the inner _CalendarViewState when its layout truth changes.
+  /// Wraps the host callback in `addPostFrameCallback` automatically if we
+  /// are currently inside a build / layout phase, so the host always
+  /// receives the callback in idle phase.
+  ///
+  /// **Internal forward target — public only because Dart's library-private
+  /// members are not accessible via `dynamic` across libraries.** Host
+  /// should not invoke this directly.
+  void dispatchTimelineCoordinatesToHostInternal(
+    SfCalendarTimelineCoordinates coords,
+  ) {
+    final void Function(SfCalendarTimelineCoordinates)? cb =
+        widget.onTimelineCoordinatesChanged;
+    if (cb == null) return;
+    final SchedulerPhase phase = SchedulerBinding.instance.schedulerPhase;
+    final bool inBuildOrLayout =
+        phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks;
+    if (inBuildOrLayout) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // re-read in case widget changed during the frame
+        final void Function(SfCalendarTimelineCoordinates)? cb2 =
+            widget.onTimelineCoordinatesChanged;
+        cb2?.call(coords);
+      });
+    } else {
+      cb(coords);
+    }
+  }
+  // ─── end SF-8 patch ────────────────────────────────────────────────────
 
   SfCalendarThemeData _getThemeDataValue(
     SfCalendarThemeData calendarThemeData,
@@ -13023,4 +13119,142 @@ double _getAgendaViewDayLabelWidth(
   }
 
   return scheduleViewSettings.dayHeaderSettings.width;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// [SF-8] Nestify patch: timeline coordinate push / query API
+//
+// 公开值类与 mixin 让宿主层（Nestify mobile）持有 fork timeline
+// 真值坐标，避免反射 Syncfusion 私有 widget tree。
+// 详见 PATCHES.md SF-8 条目。
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Snapshot of the current detail-timeline coordinate frame.
+///
+/// Pushed by the fork via [SfCalendar.onTimelineCoordinatesChanged] on
+/// every layout-mutation point.
+class SfCalendarTimelineCoordinates {
+  const SfCalendarTimelineCoordinates({
+    required this.viewportTopInBody,
+    required this.scrollOffset,
+    required this.intervalHeight,
+    required this.pinnedAllDayHeight,
+    required this.visibleDates,
+    required this.viewportWidth,
+    required this.viewportHeight,
+    required this.maxScrollExtent,
+  });
+
+  /// timeline content viewport Y-start inside the SfCalendar body.
+  /// Equals `viewHeaderHeight + pinnedAllDayHeight` (Week / 3-Day) or
+  /// `viewHeaderHeight` (Day view, all-day inside scroll content).
+  final double viewportTopInBody;
+
+  /// timeline scroll viewport current `scrollPosition.pixels`.
+  final double scrollOffset;
+
+  /// `_timeIntervalHeight`, affected by host-driven pinch zoom.
+  final double intervalHeight;
+
+  /// Week / WorkWeek pinned all-day overlay actual pixel height (含 heightAnimation).
+  /// Day view: 0 (all-day lives inside scroll content instead).
+  final double pinnedAllDayHeight;
+
+  /// Currently visible dates, determines column X mapping.
+  final List<DateTime> visibleDates;
+
+  /// Single column width (Day = full, 3-Day = full / 3, Week = full / 7).
+  final double viewportWidth;
+
+  /// timeline scroll viewport height.
+  final double viewportHeight;
+
+  /// timeline scroll viewport maxScrollExtent.
+  final double maxScrollExtent;
+
+  /// time → calendar body Y coordinate (含 scroll 补偿).
+  ///
+  /// Formula: `viewportTopInBody + hour*intervalH - scrollOffset`.
+  double yForTime(DateTime time) {
+    final double hour = time.hour + time.minute / 60.0;
+    return viewportTopInBody + hour * intervalHeight - scrollOffset;
+  }
+
+  /// Tolerance-equal (for callers to short-circuit no-op pushes).
+  bool equalsWithTolerance(
+    SfCalendarTimelineCoordinates? other, {
+    double tol = 0.5,
+  }) {
+    if (other == null) return false;
+    if ((viewportTopInBody - other.viewportTopInBody).abs() > tol) return false;
+    if ((scrollOffset - other.scrollOffset).abs() > tol) return false;
+    if ((intervalHeight - other.intervalHeight).abs() > tol) return false;
+    if ((pinnedAllDayHeight - other.pinnedAllDayHeight).abs() > tol) {
+      return false;
+    }
+    if ((viewportWidth - other.viewportWidth).abs() > tol) return false;
+    if ((viewportHeight - other.viewportHeight).abs() > tol) return false;
+    if ((maxScrollExtent - other.maxScrollExtent).abs() > tol) return false;
+    if (visibleDates.length != other.visibleDates.length) return false;
+    for (int i = 0; i < visibleDates.length; i++) {
+      final DateTime a = visibleDates[i];
+      final DateTime b = other.visibleDates[i];
+      if (a.year != b.year || a.month != b.month || a.day != b.day) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+/// Result of [SfCalendarTimelineQueryApi.queryEmptySlotAt] —— structured
+/// hit-test answer for "long-press at globalPos: is it on an appointment
+/// or empty slot? and what time / date does it land on?"
+class SfCalendarEmptySlotQueryResult {
+  const SfCalendarEmptySlotQueryResult({
+    required this.time,
+    required this.date,
+    required this.localPosition,
+    required this.isOnAppointment,
+  });
+
+  /// Snapped to fork's internal time-slot granularity (typically 5-min for
+  /// short intervals). Host may further snap.
+  final DateTime time;
+
+  /// Column date (multi-day views).
+  final DateTime date;
+
+  /// SfCalendar-local position (already converted from global).
+  final Offset localPosition;
+
+  /// `true` if the hit lands on an appointment tile (caller can route to
+  /// promote / edit path instead of create).
+  final bool isOnAppointment;
+}
+
+/// Public mixin on [State] exposing command-style timeline coordinate
+/// queries for callers that hold a `GlobalKey<SfCalendarTimelineQueryApi>`
+/// pointing at an [SfCalendar].
+///
+/// Used for **pointer-driven** reverse mapping (drag-update / pinch anchor
+/// / long-press hit-test) — for **persistent** rendering (preview / ruler
+/// / ghost), use [SfCalendar.onTimelineCoordinatesChanged] callback +
+/// host-side cached snapshot instead.
+mixin SfCalendarTimelineQueryApi on State<SfCalendar> {
+  /// Global Y coordinate → time in the current view column (5-min snap by
+  /// fork). Returns `null` when:
+  /// - the current view is not a timeline view (month / schedule / year)
+  /// - the position falls outside the 24h content area (e.g. inside the
+  ///   pinned all-day overlay or beyond the maxScrollExtent)
+  DateTime? queryTimeForGlobalY(double globalY);
+
+  /// Global X coordinate → column date (multi-day views). Returns `null` for
+  /// non-multi-day views or out-of-range X.
+  DateTime? queryDateForGlobalX(double globalX);
+
+  /// Long-press / tap hit-test at global position. Returns `null` when the
+  /// view is not a timeline view; otherwise returns a structured result so
+  /// the host can route to either empty-slot ghost or appointment promote.
+  SfCalendarEmptySlotQueryResult? queryEmptySlotAt(Offset globalPosition);
 }
