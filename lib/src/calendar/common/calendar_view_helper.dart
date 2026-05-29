@@ -312,31 +312,36 @@ class CalendarViewHelper {
     ResourceViewSettings resourceViewSettings,
     int resourceCount,
   ) {
-    /// The combined padding value between the circle and the display name text
+    // The combined padding value between the circle and the display name text.
     final double textPadding = resourceViewSettings.showAvatar ? 10 : 0;
 
-    /// To calculate the resource item height based on visible resource count,
-    /// added this condition calculated the resource item height based on
-    /// visible resource count.
+    // When visibleResourceCount is specified, that determines the height
+    // distribution regardless of provided height/width settings.
     if (resourceViewSettings.visibleResourceCount > 0) {
       return timelineViewHeight / resourceViewSettings.visibleResourceCount;
     }
 
-    double itemHeight = timelineViewHeight + textPadding;
-
-    /// Added this condition to check if the visible resource count is `-1`, we
-    /// have calculated the resource item height based on the resource panel
-    /// width and the view height, the smallest of this will set as the
-    /// resource item height.
-    if (timelineViewHeight > resourceViewSize &&
-        resourceViewSettings.visibleResourceCount < 0) {
-      itemHeight = resourceViewSize + textPadding;
+    // If the user provided an explicit per-resource height, apply it directly.
+    if (resourceViewSettings.height != null) {
+      return resourceViewSettings.height!;
     }
 
-    /// Modified the resource height if the visible resource count is `-1` on
-    /// this scenario if the resource count is less, to avoid the empty white
-    /// space on the screen height, we calculated the resource item height to
-    /// fill into the available screen height.
+    // Fallback: use resourceItemHeight (height ?? size) for sizing calculations.
+    final double effectiveResourceViewSize =
+        // ignore: deprecated_member_use_from_same_package
+        resourceViewSettings.height ?? resourceViewSettings.size;
+
+    double itemHeight = timelineViewHeight + textPadding;
+
+    // If the timeline view height is greater than the resource panel size,
+    // limit the item height to the resource panel size (plus padding).
+    if (timelineViewHeight > effectiveResourceViewSize &&
+        resourceViewSettings.visibleResourceCount < 0) {
+      itemHeight = effectiveResourceViewSize + textPadding;
+    }
+
+    // If there are fewer resources than slots available, expand to fill the
+    // available height; otherwise use the calculated itemHeight.
     return resourceCount * itemHeight < timelineViewHeight
         ? timelineViewHeight / resourceCount
         : itemHeight;

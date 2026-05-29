@@ -572,14 +572,14 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     final double resourceItemHeight =
         isResourceEnabled
             ? CalendarViewHelper.getResourceItemHeight(
-              widget.calendar.resourceViewSettings.size,
+              widget.calendar.resourceViewSettings.width!,
               widget.height - viewHeaderHeight - timeLabelWidth,
               widget.calendar.resourceViewSettings,
               widget.calendar.dataSource!.resources!.length,
             )
             : 0;
     final double resourceViewSize =
-        isResourceEnabled ? widget.calendar.resourceViewSettings.size : 0;
+        isResourceEnabled ? widget.calendar.resourceViewSettings.width! : 0;
     final bool isMonthView =
         widget.view == CalendarView.month ||
         widget.view == CalendarView.timelineMonth;
@@ -4632,7 +4632,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     )) {
       final double resourceItemHeight =
           CalendarViewHelper.getResourceItemHeight(
-            widget.calendar.resourceViewSettings.size,
+            widget.calendar.resourceViewSettings.width!,
             widget.height,
             widget.calendar.resourceViewSettings,
             widget.calendar.dataSource!.resources!.length,
@@ -4767,7 +4767,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     )) {
       final double resourceItemHeight =
           CalendarViewHelper.getResourceItemHeight(
-            widget.calendar.resourceViewSettings.size,
+            widget.calendar.resourceViewSettings.width!,
             widget.height,
             widget.calendar.resourceViewSettings,
             widget.calendar.dataSource!.resources!.length,
@@ -5300,7 +5300,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
                 .position
                 .viewportDimension;
         final double resourceViewSize =
-            isResourceEnabled ? widget.calendar.resourceViewSettings.size : 0;
+            isResourceEnabled ? widget.calendar.resourceViewSettings.width! : 0;
         final bool isTimeline = CalendarViewHelper.isTimelineView(
           widget.controller.view!,
         );
@@ -10035,7 +10035,8 @@ class _CalendarViewState extends State<_CalendarView>
     height -= viewHeaderHeight + timeLabelSize;
     if (isResourceEnabled) {
       _updateProgrammaticSelectedResourceIndex();
-      final double resourceViewSize = widget.calendar.resourceViewSettings.size;
+      final double resourceViewSize =
+          widget.calendar.resourceViewSettings.width!;
       resourceItemHeight = CalendarViewHelper.getResourceItemHeight(
         resourceViewSize,
         widget.height - viewHeaderHeight - timeLabelSize,
@@ -10547,7 +10548,7 @@ class _CalendarViewState extends State<_CalendarView>
             ? widget.calendar.dataSource!.resources!.length
             : 0;
     final double resourceItemHeight = CalendarViewHelper.getResourceItemHeight(
-      widget.calendar.resourceViewSettings.size,
+      widget.calendar.resourceViewSettings.width!,
       widget.height - viewHeaderHeight - timeLabelSize,
       widget.calendar.resourceViewSettings,
       resourceCount,

@@ -315,7 +315,11 @@ class MonthAppointmentHelper {
         final List<AppointmentView>? existingAppointments =
             indexAppointments[i];
         if (existingAppointments != null) {
-          existingAppointments.add(appointmentView);
+          if (!existingAppointments.any(
+            (AppointmentView view) => identical(view, appointmentView),
+          )) {
+            existingAppointments.add(appointmentView);
+          }
           indexAppointments[i] = existingAppointments;
         } else {
           indexAppointments[i] = <AppointmentView>[appointmentView];

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 /// the [SfCalendar].
 ///
 /// Allows to customize the [visibleResourceCount],[showAvatar],
-/// [size], and [displayNameTextStyle] in resource view of calendar.
+/// size, and [displayNameTextStyle] in resource view of calendar.
 ///
 /// See also:
 /// * [CalendarResource], which holds the data for the resource in the
@@ -65,15 +65,51 @@ import 'package:flutter/material.dart';
 /// ```
 @immutable
 class ResourceViewSettings with Diagnosticable {
-  /// Creates a resource view settings for calendar.
+  /// Creates resource view settings for [SfCalendar].
   ///
-  /// The properties allows to customize the resource view of [SfCalendar].
+  /// Use this to customize the size, layout, and appearance of the resource view.
+  ///
+  /// `size` — Sets both the resource panel width and each resource item's height.
+  /// Defaults to `75`.
+  ///
+  /// Deprecated: `size` sets both the panel width and the item height of the
+  /// resource view using a single value. For more flexible sizing, use `width`
+  /// and `height` to set each dimension individually.
+  ///
+  /// `height` — Sets the height for each resource item when given explicitly.
+  /// Ignored when `visibleResourceCount` > 0. Falls back to `size` when null.
+  ///
+  /// `width` — Sets the width for the resource panel when given explicitly.
+  /// Falls back to `size` when null.
+  ///
+  /// `visibleResourceCount` — When greater than `0`, splits the available
+  /// vertical space equally among visible resources, overriding both `height`
+  /// and `size`.
+  ///
+  /// `showAvatar` — Indicates whether a circular avatar is shown for each
+  /// resource. Defaults to `true`.
+  ///
+  /// `displayNameTextStyle` — Text style used for the display name of each
+  /// resource.
+  ///
+  /// ### Behavior and precedence
+  ///
+  /// * If `height` or `width` is provided, the provided value is used.
+  /// * If neither is provided, `size` is used for both dimensions.
+  /// * When `visibleResourceCount` > 0, it takes precedence for resource item
+  ///   height over both `height` and `size`.
   const ResourceViewSettings({
+    @Deprecated(
+      'Use the width property to control the resource panel width and the height property to control each resource item height.',
+    )
     this.size = 75,
     this.visibleResourceCount = -1,
     this.showAvatar = true,
     this.displayNameTextStyle,
-  }) : assert(size >= 0),
+    this.height,
+    double? width,
+  }) : width = width ?? size,
+       assert(size >= 0),
        assert(visibleResourceCount >= -1);
 
   /// The number of resources to be displayed in the available screen height in
@@ -145,9 +181,13 @@ class ResourceViewSettings with Diagnosticable {
   /// ```
   final TextStyle? displayNameTextStyle;
 
-  /// The size of the resource view panel in timeline views of [SfCalendar].
+  /// Applies a uniform size to both the resource panel width
+  /// and the height of each resource item.
   ///
-  /// Defaults to `75`.
+  /// If `width` or `height` is specified explicitly, those values take
+  /// precedence over `size`.
+  ///
+  /// Defaults to 75.
   ///
   /// See also:
   /// * [CalendarResource], the object which holds the data for the resource in
@@ -179,7 +219,64 @@ class ResourceViewSettings with Diagnosticable {
   ///}
   ///
   /// ```
+  @Deprecated(
+    'Use the width property to control the resource panel width and the height property to control each resource item height.',
+  )
   final double size;
+
+  /// Optional explicit height to use for each resource item.
+  ///
+  /// When `height` is provided, value will be used as the per-resource height in scenarios where `visibleResourceCount`
+  /// is not provided. If `visibleResourceCount` is provided, it determines
+  /// the height distribution and height property will be ignored.
+  ///
+  /// Example:
+  /// ```dart
+  ///@override
+  ///  Widget build(BuildContext context) {
+  ///    return Container(
+  ///      child: SfCalendar(
+  ///        view: CalendarView.timelineMonth,
+  ///        dataSource: _getCalendarDataSource(),
+  ///        resourceViewSettings: ResourceViewSettings(
+  ///          height: 120,
+  ///          displayNameTextStyle: TextStyle(
+  ///              fontStyle: FontStyle.italic,
+  ///              fontSize: 15,
+  ///              fontWeight: FontWeight.w400,
+  ///        ),
+  ///      ),
+  ///    ),
+  ///  );
+  ///}
+  ///```
+  final double? height;
+
+  /// Optional explicit width to use for the resource panel.
+  ///
+  /// When `width` is provided, value will be used as the resource panel width.
+  ///
+  /// Example:
+  /// ```dart
+  ///@override
+  ///  Widget build(BuildContext context) {
+  ///    return Container(
+  ///      child: SfCalendar(
+  ///        view: CalendarView.timelineMonth,
+  ///        dataSource: _getCalendarDataSource(),
+  ///        resourceViewSettings: ResourceViewSettings(
+  ///          width: 150,
+  ///          displayNameTextStyle: TextStyle(
+  ///              fontStyle: FontStyle.italic,
+  ///              fontSize: 15,
+  ///              fontWeight: FontWeight.w400,
+  ///        ),
+  ///      ),
+  ///    ),
+  ///  );
+  ///}
+  ///```
+  final double? width;
 
   /// Shows a circle that represents a user.
   ///
@@ -234,7 +331,10 @@ class ResourceViewSettings with Diagnosticable {
     if (other is ResourceViewSettings) {
       otherStyle = other;
     }
+    // ignore: deprecated_member_use_from_same_package
     return otherStyle.size == size &&
+        otherStyle.height == height &&
+        otherStyle.width == width &&
         otherStyle.visibleResourceCount == visibleResourceCount &&
         otherStyle.showAvatar == showAvatar &&
         otherStyle.displayNameTextStyle == displayNameTextStyle;
@@ -249,7 +349,10 @@ class ResourceViewSettings with Diagnosticable {
         displayNameTextStyle,
       ),
     );
+    // ignore: deprecated_member_use_from_same_package
     properties.add(DoubleProperty('size', size));
+    properties.add(DoubleProperty('height', height));
+    properties.add(DoubleProperty('width', width));
     properties.add(DiagnosticsProperty<bool>('showAvatar', showAvatar));
     properties.add(IntProperty('visibleResourceCount', visibleResourceCount));
   }
@@ -257,7 +360,10 @@ class ResourceViewSettings with Diagnosticable {
   @override
   int get hashCode {
     return Object.hash(
+      // ignore: deprecated_member_use_from_same_package
       size,
+      height,
+      width,
       visibleResourceCount,
       showAvatar,
       displayNameTextStyle,

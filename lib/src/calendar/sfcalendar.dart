@@ -2868,11 +2868,9 @@ class _SfCalendarState extends State<SfCalendar>
   /// This value maintain the time slot view scrolling when calendar view
   /// changed and view navigation(forward and backward).
   bool _canScrollTimeSlotView = true;
-  bool _isInitialState = false;
 
   @override
   void initState() {
-    _isInitialState = true;
     _textScaleFactor = 1;
     _timeZoneLoaded = false;
     timeZoneLoaded = _timeZoneLoaded;
@@ -3366,7 +3364,7 @@ class _SfCalendarState extends State<SfCalendar>
             _view,
           );
           final double resourceViewSize =
-              isResourceEnabled ? widget.resourceViewSettings.size : 0;
+              isResourceEnabled ? widget.resourceViewSettings.width! : 0;
           if ((!_isRTL && updatedPosition.dx < resourceViewSize) ||
               (_isRTL && updatedPosition.dx > _minWidth - resourceViewSize)) {
             final double viewHeaderHeight =
@@ -5454,12 +5452,10 @@ class _SfCalendarState extends State<SfCalendar>
     if (localPosition.dy < widget.headerHeight) {
       _updateMouseHoveringForHeader(localPosition);
     } else {
+      final double resourceViewSize = widget.resourceViewSettings.width!;
       if (isResourceEnabled &&
-          ((isRTL &&
-                  localPosition.dx >
-                      (_minWidth - widget.resourceViewSettings.size)) ||
-              (!isRTL &&
-                  localPosition.dx < widget.resourceViewSettings.size)) &&
+          ((isRTL && localPosition.dx > (_minWidth - resourceViewSize)) ||
+              (!isRTL && localPosition.dx < resourceViewSize)) &&
           localPosition.dy > startPosition! &&
           (CalendarViewHelper.shouldRaiseCalendarTapCallback(widget.onTap) ||
               CalendarViewHelper.shouldRaiseCalendarLongPressCallback(
@@ -8764,8 +8760,7 @@ class _SfCalendarState extends State<SfCalendar>
       }
     }
 
-    if (_isInitialState && isInitialLoadMore) {
-      _isInitialState = false;
+    if (isInitialLoadMore) {
       _isNeedLoadMore = true;
       _scheduleMaxDate = AppointmentHelper.getMonthEndDate(_scheduleMaxDate!);
       _scheduleMinDate = AppointmentHelper.getMonthStartDate(_scheduleMinDate!);
@@ -8895,7 +8890,6 @@ class _SfCalendarState extends State<SfCalendar>
                   parent: RangeMaintainingScrollPhysics(),
                 ),
               ),
-              scrollBehavior: _CalendarCustomScrollBehavior(),
               controller: _agendaScrollController,
               center: _scheduleViewKey,
               slivers: <Widget>[
@@ -9556,7 +9550,7 @@ class _SfCalendarState extends State<SfCalendar>
       _view,
     );
     final double resourceViewSize =
-        isResourceEnabled ? widget.resourceViewSettings.size : 0;
+        isResourceEnabled ? widget.resourceViewSettings.width! : 0;
     final DateTime currentViewDate =
         _currentViewVisibleDates[(_currentViewVisibleDates.length / 2)
             .truncate()];
@@ -13015,16 +13009,4 @@ double _getAgendaViewDayLabelWidth(
   }
 
   return scheduleViewSettings.dayHeaderSettings.width;
-}
-
-class _CalendarCustomScrollBehavior extends MaterialScrollBehavior {
-  @override
-  Set<PointerDeviceKind> get dragDevices => <PointerDeviceKind>{
-    PointerDeviceKind.touch,
-    PointerDeviceKind.mouse,
-    PointerDeviceKind.trackpad,
-    PointerDeviceKind.stylus,
-    PointerDeviceKind.invertedStylus,
-    PointerDeviceKind.unknown,
-  };
 }
