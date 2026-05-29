@@ -844,18 +844,32 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
       final double mins = appointment.actualStartTime.minute - viewStartMinutes;
       final int totalMins = ((totalHours * 60) + mins).toInt();
 
-      final double appointmentWidth =
+      // SF-6 (Nestify): lane 扩展。当 maxPositions <= 1 时跳过扫描，
+      // 数学回落到上游 (cellWidth - cellEndPadding) / maxPositions 与
+      // column * cellWidth + position * unitWidth 表达式，byte-identical。
+      // maxPositions > 1 时按自身时间段实际占用的相邻 lane 收紧/扩展。
+      final double unitWidth =
           (cellWidth - cellEndPadding) / appointmentView.maxPositions;
+      int leftLane = appointmentView.position;
+      int rightLane = appointmentView.position;
+      if (appointmentView.maxPositions > 1) {
+        final List<int> extent = _computeDayAppointmentLaneExtent(
+          appointmentView,
+          appointment,
+        );
+        leftLane = extent[0];
+        rightLane = extent[1];
+      }
+      final int laneSpan = rightLane - leftLane + 1;
+      final double appointmentWidth = laneSpan * unitWidth;
       if (widget.isRTL) {
         xPosition =
             column * cellWidth +
-            (appointmentView.position * appointmentWidth) +
+            ((appointmentView.maxPositions - 1 - rightLane) * unitWidth) +
             cellEndPadding;
       } else {
         xPosition =
-            column * cellWidth +
-            (appointmentView.position * appointmentWidth) +
-            timeLabelWidth;
+            column * cellWidth + (leftLane * unitWidth) + timeLabelWidth;
       }
 
       Duration difference = AppointmentHelper.getDifference(
@@ -945,6 +959,77 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
       );
       appointmentView.appointmentRect = rect;
     }
+  }
+
+  /// SF-6 (Nestify): 计算 day/week/workWeek 布局下 [view] 的有效 lane 区间
+  /// `[pLeft, pRight]`，允许 rect 吸收相邻 lane 中无时间重叠的空闲区域。
+  ///
+  /// 严格重叠语义同 `AppointmentHelper._isIntersectingAppointmentInDayView`
+  /// 的前三个分支（start-inside / end-inside / fully-spanning）；此处不需要
+  /// `isTimelineMonth` / `isSameTimeSlot` 分支：`_updateDayAppointmentDetails`
+  /// 入口已过滤掉 timeline / all-day / spanned appointment。
+  List<int> _computeDayAppointmentLaneExtent(
+    AppointmentView view,
+    CalendarAppointment appointment,
+  ) {
+    final DateTime aStart = appointment.actualStartTime;
+    final DateTime aEnd = appointment.actualEndTime;
+    final int basePosition = view.position;
+    final int maxPositions = view.maxPositions;
+
+    final Set<int> blockedLanes = <int>{};
+    for (int k = 0; k < _appointmentCollection.length; k++) {
+      final AppointmentView other = _appointmentCollection[k];
+      if (identical(other, view) ||
+          other.canReuse ||
+          other.appointment == null ||
+          other.position < 0) {
+        continue;
+      }
+      final CalendarAppointment otherApp = other.appointment!;
+      if (!isSameDate(otherApp.actualStartTime, aStart)) {
+        continue;
+      }
+      if (!_overlapsStrictForLaneExtent(
+        aStart,
+        aEnd,
+        otherApp.actualStartTime,
+        otherApp.actualEndTime,
+      )) {
+        continue;
+      }
+      blockedLanes.add(other.position);
+    }
+
+    int pLeft = basePosition;
+    while (pLeft > 0 && !blockedLanes.contains(pLeft - 1)) {
+      pLeft--;
+    }
+    int pRight = basePosition;
+    while (pRight < maxPositions - 1 && !blockedLanes.contains(pRight + 1)) {
+      pRight++;
+    }
+    return <int>[pLeft, pRight];
+  }
+
+  /// SF-6 (Nestify): 时间重叠判定（标准半开区间 [start, end) overlap）。
+  ///
+  /// 覆盖范围**必须**至少与 `AppointmentHelper._isIntersectingAppointmentInDayView`
+  /// 一致——后者除前三个 strict 分支外还含 `isSameTimeSlot` 边界检查，会把
+  /// 「相同 start 或 end 的精确边界对」也算作 intersecting 并分到不同 lane。
+  ///
+  /// 早期版本只镜像三个 strict 分支，漏掉相同 start/end 情形：导致 V 误判
+  /// 邻 lane 的 O 不与之重叠 → 扩展到 O 占用的 lane，引发视图重叠（issue #1699
+  /// regression）。标准公式 `aStart < bEnd && bStart < aEnd` 一次性覆盖：
+  /// 相同 start、相同 end、包含、被包含、相互错开；back-to-back（A.end == B.start）
+  /// 仍判为不重叠，与 Syncfusion 期望一致。
+  bool _overlapsStrictForLaneExtent(
+    DateTime aStart,
+    DateTime aEnd,
+    DateTime bStart,
+    DateTime bEnd,
+  ) {
+    return aStart.isBefore(bEnd) && bStart.isBefore(aEnd);
   }
 
   void _updateTimelineMonthAppointmentDetails(
