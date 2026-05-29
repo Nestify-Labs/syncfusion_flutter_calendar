@@ -18,12 +18,13 @@ consumed by the Nestify mobile app via a `git:` dependency in
 ## Branches
 
 - `main` — Nestify patches applied on top of the latest pristine upstream. This is the branch the Nestify mono-repo pins via tag.
-- `upstream/32.1.x` — Pristine `32.1.23`, byte-identical to the pub.dev tarball. Reserved for upstream-only content; **never carries Nestify patches**.
+- `upstream/33.2.x` — Pristine `33.2.8`, byte-identical to the pub.dev tarball. Reserved for upstream-only content; **never carries Nestify patches**.
+- `upstream/32.1.x` — Previous baseline pristine `32.1.23`, retained for archival reference.
 
 ## Current baseline
 
-- Upstream version: **32.1.23**
-- Current tag: see latest `v32.1.23+nestify.<n>` in [Releases](../../releases) / [Tags](../../tags).
+- Upstream version: **33.2.8**
+- Current tag: see latest `v33.2.8+nestify.<n>` in [Releases](../../releases) / [Tags](../../tags).
 
 ## License
 
