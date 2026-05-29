@@ -223,6 +223,7 @@ class SfCalendar extends StatefulWidget {
     this.onDragStart,
     this.onDragUpdate,
     this.onDragEnd,
+    this.deferAppointmentDragOnLongPress = false,
   }) : assert(firstDayOfWeek >= 1 && firstDayOfWeek <= 7),
        assert(headerHeight >= 0),
        assert(viewHeaderHeight >= -1),
@@ -2084,6 +2085,19 @@ class SfCalendar extends StatefulWidget {
   /// }
   /// ```
   final bool allowDragAndDrop;
+
+  /// [SF-7] Nestify patch: when `true`, long-press on an appointment does NOT
+  /// immediately enter Syncfusion's internal drag state — instead it suspends
+  /// the candidate appointmentView and only invokes `_handleAppointmentDragStart`
+  /// after the pointer has moved beyond `kTouchSlop`. This lets the host
+  /// implement a "long-press promote / preview" gesture without triggering
+  /// Syncfusion's collision-layout recompute (which can visually re-arrange
+  /// the entire visible appointment window). Real drag-to-reschedule still
+  /// works — it activates lazily once movement exceeds `kTouchSlop`.
+  ///
+  /// Mouse / pointer drag paths on Web / Desktop are unaffected (they bypass
+  /// `_handleLongPressStart`). Default `false` preserves upstream behavior.
+  final bool deferAppointmentDragOnLongPress;
 
   /// Allows to customize the drag and drop environment.
   ///

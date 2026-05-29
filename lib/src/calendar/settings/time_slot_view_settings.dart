@@ -73,13 +73,16 @@ class TimeSlotViewSettings with Diagnosticable {
     this.timeTextStyle,
     this.allDayPanelColor,
     this.numberOfDaysInView = -1,
+    this.scrollEndPadding = 0,
+    this.scrollEndPaddingDecoration,
   }) : assert(startHour >= 0 && startHour <= 24),
        assert(endHour >= 0 && endHour <= 24),
        assert(timeIntervalHeight >= -1),
        assert(timeIntervalWidth >= -2),
        assert(timelineAppointmentHeight >= -1),
        assert(timeRulerSize >= -1),
-       assert(numberOfDaysInView >= -1);
+       assert(numberOfDaysInView >= -1),
+       assert(scrollEndPadding >= 0);
 
   /// The start hour for the time slot views in [SfCalendar].
   ///
@@ -692,6 +695,18 @@ class TimeSlotViewSettings with Diagnosticable {
   ///  ```
   final int numberOfDaysInView;
 
+  /// Extra non-time scrollable space appended after the end hour in day, week
+  /// and work week time-slot views.
+  ///
+  /// Defaults to `0`.
+  final double scrollEndPadding;
+
+  /// Decoration painted behind [scrollEndPadding].
+  ///
+  /// This is only used when [scrollEndPadding] is greater than `0`. It does not
+  /// add a calendar cell, appointment layer, semantic node, or hit-test target.
+  final Decoration? scrollEndPaddingDecoration;
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -717,7 +732,9 @@ class TimeSlotViewSettings with Diagnosticable {
         otherStyle.dateFormat == dateFormat &&
         otherStyle.dayFormat == dayFormat &&
         otherStyle.timeRulerSize == timeRulerSize &&
-        otherStyle.timeTextStyle == timeTextStyle;
+        otherStyle.timeTextStyle == timeTextStyle &&
+        otherStyle.scrollEndPadding == scrollEndPadding &&
+        otherStyle.scrollEndPaddingDecoration == scrollEndPaddingDecoration;
   }
 
   @override
@@ -746,6 +763,13 @@ class TimeSlotViewSettings with Diagnosticable {
     properties.add(StringProperty('dateFormat', dateFormat));
     properties.add(StringProperty('dayFormat', dayFormat));
     properties.add(IntProperty('numberOfDaysInView', numberOfDaysInView));
+    properties.add(DoubleProperty('scrollEndPadding', scrollEndPadding));
+    properties.add(
+      DiagnosticsProperty<Decoration>(
+        'scrollEndPaddingDecoration',
+        scrollEndPaddingDecoration,
+      ),
+    );
   }
 
   @override
@@ -764,6 +788,8 @@ class TimeSlotViewSettings with Diagnosticable {
       dayFormat,
       timeRulerSize,
       timeTextStyle,
+      scrollEndPadding,
+      scrollEndPaddingDecoration,
     );
   }
 }

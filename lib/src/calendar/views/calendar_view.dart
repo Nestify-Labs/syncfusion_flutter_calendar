@@ -271,6 +271,13 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   Timer? _timer;
   late double? _viewPortHeight;
 
+  // [SF-7] Nestify patch: deferAppointmentDragOnLongPress 路径下，
+  // _handleLongPressStart 把候选 view 挂在这里而不调 _handleAppointmentDragStart。
+  // pointer 移动超过 kTouchSlop 时，_handleLongPressMove lazily 启动真 drag；
+  // 期间松手则 _handleLongPressEnd 仅清挂起，不触发 onDragEnd。
+  AppointmentView? _pendingLongPressAppointmentView;
+  Offset? _pendingLongPressDownPosition;
+
   @override
   void initState() {
     _dragDetails = ValueNotifier<_DragPaintDetails>(
@@ -975,6 +982,16 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       _dragDetails.value.position.value = null;
       return;
     }
+    // [SF-7] Nestify patch: deferAppointmentDragOnLongPress 路径下，
+    // 长按只挂起候选，不立刻进入 drag-state，避免 Syncfusion 内部 collision
+    // 列布局重排（issue: 长按 Event 整页换列序 / preview 与原 tile 错位）。
+    // pointer 真实移动超过 kTouchSlop 时，_handleLongPressMove 会 lazy 调
+    // _handleAppointmentDragStart 接管真 drag；松手前未移动 → 仅清挂起。
+    if (widget.calendar.deferAppointmentDragOnLongPress) {
+      _pendingLongPressAppointmentView = appointmentView.clone();
+      _pendingLongPressDownPosition = details.localPosition;
+      return;
+    }
     currentState._removeAllWidgetHovering();
     appointmentView = appointmentView.clone();
     _handleAppointmentDragStart(
@@ -1011,6 +1028,31 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     double resourceItemHeight,
     double weekNumberPanelWidth,
   ) {
+    // [SF-7] Nestify patch: deferAppointmentDragOnLongPress 路径下，
+    // 长按时挂起的 appointmentView 等到 pointer 移动超过 kTouchSlop 才真启 drag。
+    if (_pendingLongPressAppointmentView != null &&
+        _pendingLongPressDownPosition != null) {
+      final double movedDist =
+          (details - _pendingLongPressDownPosition!).distance;
+      if (movedDist < kTouchSlop) {
+        return;
+      }
+      final AppointmentView pendingView = _pendingLongPressAppointmentView!;
+      final Offset pendingDown = _pendingLongPressDownPosition!;
+      _pendingLongPressAppointmentView = null;
+      _pendingLongPressDownPosition = null;
+      _getCurrentViewByVisibleDates()?._removeAllWidgetHovering();
+      _handleAppointmentDragStart(
+        pendingView,
+        isTimelineView,
+        pendingDown,
+        isResourceEnabled,
+        viewHeaderHeight,
+        timeLabelWidth,
+      );
+      // fall-through 进入正常 move 逻辑（此时 _dragDetails.value.appointmentView 已非 null）
+    }
+
     if (_dragDetails.value.appointmentView == null) {
       return;
     }
@@ -2019,12 +2061,16 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
           _dragDetails.value.appointmentView!.appointmentRect!.height;
     }
 
-    draggingTime =
-        currentState._getDateFromPosition(
-          xPosition,
-          yPosition,
-          timeLabelWidth,
-        )!;
+    final DateTime? dateFromPosition = currentState._getDateFromPosition(
+      xPosition,
+      yPosition,
+      timeLabelWidth,
+    );
+    if (dateFromPosition == null && !isMonthView && !isTimelineView) {
+      _dragDetails.value.draggingTime = null;
+      return;
+    }
+    draggingTime = dateFromPosition!;
     if (!isMonthView) {
       if (isTimelineView) {
         final DateTime time =
@@ -2182,6 +2228,15 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     double timeLabelWidth,
     double weekNumberPanelWidth,
   ) {
+    // [SF-7] Nestify patch: deferAppointmentDragOnLongPress 路径下，
+    // 若长按期间从未移动超过 kTouchSlop，挂起态尚未升级为真 drag。
+    // 此时直接清挂起即可，不调 onDragEnd（纯长按由宿主层 onLongPress 接管）。
+    if (_pendingLongPressAppointmentView != null) {
+      _pendingLongPressAppointmentView = null;
+      _pendingLongPressDownPosition = null;
+      return;
+    }
+
     if (_dragDetails.value.appointmentView == null) {
       return;
     }
@@ -2280,6 +2335,20 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       yPosition,
       timeLabelWidth,
     );
+    if (dropTime == null && !isMonthView && !isTimelineView) {
+      if (widget.calendar.onDragEnd != null) {
+        widget.calendar.onDragEnd!(
+          AppointmentDragEndDetails(
+            _getCalendarAppointmentToObject(appointment, widget.calendar),
+            null,
+            null,
+            null,
+          ),
+        );
+      }
+      _resetDraggingDetails(currentState);
+      return;
+    }
     if (!isMonthView) {
       if (isTimelineView) {
         final DateTime time =
@@ -2433,9 +2502,29 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
         }
       }
 
+      // [SF-5] Nestify patch: 当 host 在拖拽期间刷新数据源（dataSource.updateFromEvents
+      // 重建 appointments）时，旧 Appointment 引用的 id 在新列表里找不到，
+      // parentAppointment 保持 null。镜像 line 2423 的早返回模式：把 dropTime
+      // 设为原起点交回 host onDragEnd（host 的 stationary no-op guard 会触发 refresh
+      // 完成回滚），再 reset painter 退出，避免下一行 `!` 强解抛 NPE（issue #1582）。
+      if (parentAppointment == null) {
+        if (widget.calendar.onDragEnd != null) {
+          widget.calendar.onDragEnd!(
+            AppointmentDragEndDetails(
+              _getCalendarAppointmentToObject(appointment, widget.calendar),
+              previousResource,
+              previousResource,
+              appointment.exactStartTime,
+            ),
+          );
+        }
+        _resetDraggingDetails(currentState);
+        return;
+      }
+
       final List<DateTime> recurrenceDates =
           RecurrenceHelper.getRecurrenceDateTimeCollection(
-            parentAppointment!.recurrenceRule ?? '',
+            parentAppointment.recurrenceRule ?? '',
             parentAppointment.exactStartTime,
             recurrenceDuration: AppointmentHelper.getDifference(
               parentAppointment.exactStartTime,
@@ -7765,6 +7854,23 @@ class _CalendarViewState extends State<_CalendarView>
       yPosition = overAllHeight;
     }
 
+    if (yPosition >= _dayViewTimeSlotContentHeight) {
+      if (CalendarViewHelper.shouldRaiseAppointmentResizeEndCallback(
+        widget.calendar.onAppointmentResizeEnd,
+      )) {
+        CalendarViewHelper.raiseAppointmentResizeEndCallback(
+          widget.calendar,
+          appointment.data,
+          null,
+          appointment.exactStartTime,
+          appointment.exactEndTime,
+        );
+      }
+
+      _resetResizingPainter();
+      return;
+    }
+
     final DateTime resizingTime =
         _timeFromPosition(
           appointment.actualStartTime,
@@ -7855,7 +7961,28 @@ class _CalendarViewState extends State<_CalendarView>
         }
       }
 
-      widget.calendar.dataSource!.appointments!.remove(parentAppointment!.data);
+      // [SF-5] Nestify patch: 与 _handleLongPressEnd / _onHorizontalEnd 同型 race ——
+      // 调整大小期间 host 刷新 dataSource → appointments 列表重建 → 旧 id 在新列表
+      // 找不到 → parentAppointment 为 null。镜像 line 7881 的早返回：用原起止时间触发
+      // onAppointmentResizeEnd 让 host refresh 兜底，再 reset resize painter 退出，
+      // 避免下一行 `parentAppointment!.data` 强解抛 NPE（issue #1582）。
+      if (parentAppointment == null) {
+        if (CalendarViewHelper.shouldRaiseAppointmentResizeEndCallback(
+          widget.calendar.onAppointmentResizeEnd,
+        )) {
+          CalendarViewHelper.raiseAppointmentResizeEndCallback(
+            widget.calendar,
+            appointment.data,
+            null,
+            appointment.exactStartTime,
+            appointment.exactEndTime,
+          );
+        }
+        _resetResizingPainter();
+        return;
+      }
+
+      widget.calendar.dataSource!.appointments!.remove(parentAppointment.data);
       widget.calendar.dataSource!.notifyListeners(
         CalendarDataSourceAction.remove,
         <dynamic>[parentAppointment.data],
@@ -8402,8 +8529,17 @@ class _CalendarViewState extends State<_CalendarView>
 
         currentXPosition -= timeLabelWidth;
       }
-      resizingTime =
-          _getDateFromPosition(currentXPosition, yPosition, timeLabelWidth)!;
+      final DateTime? dateFromPosition = _getDateFromPosition(
+        currentXPosition,
+        yPosition,
+        timeLabelWidth,
+      );
+      if (dateFromPosition == null) {
+        _resizingDetails.value.position.value = Offset(xPosition, yPosition);
+        _resizingDetails.value.resizingTime = null;
+        return;
+      }
+      resizingTime = dateFromPosition;
     }
 
     if (_resizingDetails.value.isAllDayPanel ||
@@ -8548,8 +8684,28 @@ class _CalendarViewState extends State<_CalendarView>
       }
     }
 
-    DateTime resizingTime =
-        _getDateFromPosition(xPosition, yPosition, timeLabelWidth)!;
+    final DateTime? dateFromPosition = _getDateFromPosition(
+      xPosition,
+      yPosition,
+      timeLabelWidth,
+    );
+    if (dateFromPosition == null) {
+      if (CalendarViewHelper.shouldRaiseAppointmentResizeEndCallback(
+        widget.calendar.onAppointmentResizeEnd,
+      )) {
+        CalendarViewHelper.raiseAppointmentResizeEndCallback(
+          widget.calendar,
+          appointment.data,
+          null,
+          appointment.exactStartTime,
+          appointment.exactEndTime,
+        );
+      }
+
+      _resetResizingPainter();
+      return;
+    }
+    DateTime resizingTime = dateFromPosition;
     if (_resizingDetails.value.isAllDayPanel ||
         widget.view == CalendarView.month ||
         widget.view == CalendarView.timelineMonth) {
@@ -8687,9 +8843,30 @@ class _CalendarViewState extends State<_CalendarView>
         }
       }
 
+      // [SF-5] Nestify patch: 与 _handleLongPressEnd 同型 race ——
+      // 调整大小期间 host 刷新 dataSource → appointments 列表重建 → 旧 id
+      // 在新列表里找不到 → parentAppointment 为 null。镜像 line 8720 的早返回：
+      // 用 appointment 原起止时间触发 onAppointmentResizeEnd 让 host refresh 兜底，
+      // 再 reset resize painter 退出，避免下一行 `!` 强解抛 NPE（issue #1582）。
+      if (parentAppointment == null) {
+        if (CalendarViewHelper.shouldRaiseAppointmentResizeEndCallback(
+          widget.calendar.onAppointmentResizeEnd,
+        )) {
+          CalendarViewHelper.raiseAppointmentResizeEndCallback(
+            widget.calendar,
+            appointment.data,
+            resource,
+            appointment.exactStartTime,
+            appointment.exactEndTime,
+          );
+        }
+        _resetResizingPainter();
+        return;
+      }
+
       final List<DateTime> recurrenceDates =
           RecurrenceHelper.getRecurrenceDateTimeCollection(
-            parentAppointment!.recurrenceRule ?? '',
+            parentAppointment.recurrenceRule ?? '',
             parentAppointment.exactStartTime,
             recurrenceDuration: AppointmentHelper.getDifference(
               parentAppointment.exactStartTime,
@@ -9520,6 +9697,12 @@ class _CalendarViewState extends State<_CalendarView>
       }
       final double currentYPosition =
           updatedYPosition - viewHeaderHeight! - allDayPanelHeight!;
+      if (_scrollController!.offset +
+              (currentYPosition > 0 ? currentYPosition : 0) >=
+          _dayViewTimeSlotContentHeight) {
+        _resizingDetails.value.resizingTime = null;
+        return;
+      }
       resizingTime =
           _timeFromPosition(
             _resizingDetails
@@ -9813,6 +9996,10 @@ class _CalendarViewState extends State<_CalendarView>
       widget.calendar.timeSlotViewSettings.nonWorkingDays,
       widget.calendar.monthViewSettings.numberOfWeeksInView,
     );
+    final double scrollEndPadding =
+        widget.calendar.timeSlotViewSettings.scrollEndPadding;
+    final Decoration? scrollEndPaddingDecoration =
+        widget.calendar.timeSlotViewSettings.scrollEndPaddingDecoration;
     if (isDayView) {
       viewHeaderWidth = timeLabelWidth < 50 ? 50 : timeLabelWidth;
       viewHeaderHeight =
@@ -9883,9 +10070,8 @@ class _CalendarViewState extends State<_CalendarView>
           left: 0,
           right: 0,
           bottom: 0,
-          child: Scrollbar(
-            controller: _scrollController,
-            thumbVisibility: !widget.isMobilePlatform,
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
             child: ListView(
               padding: EdgeInsets.zero,
               controller: _scrollController,
@@ -9957,6 +10143,17 @@ class _CalendarViewState extends State<_CalendarView>
                     ),
                   ],
                 ),
+                if (scrollEndPadding > 0)
+                  // Passive scroll-only tail space after the 24h content.
+                  SizedBox(
+                    height: scrollEndPadding,
+                    child:
+                        scrollEndPaddingDecoration == null
+                            ? null
+                            : DecoratedBox(
+                              decoration: scrollEndPaddingDecoration,
+                            ),
+                  ),
               ],
             ),
           ),
@@ -10101,9 +10298,8 @@ class _CalendarViewState extends State<_CalendarView>
           left: 0,
           right: 0,
           bottom: 0,
-          child: Scrollbar(
-            controller: _scrollController,
-            thumbVisibility: !widget.isMobilePlatform,
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
             child: ListView(
               padding: EdgeInsets.zero,
               controller: _scrollController,
@@ -10117,9 +10313,8 @@ class _CalendarViewState extends State<_CalendarView>
                   width: width,
                   child: Stack(
                     children: <Widget>[
-                      Scrollbar(
-                        controller: _timelineViewVerticalScrollController,
-                        thumbVisibility: !widget.isMobilePlatform,
+                      ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
                         child: ListView(
                           padding: EdgeInsets.zero,
                           controller: _timelineViewVerticalScrollController,
@@ -13000,6 +13195,14 @@ class _CalendarViewState extends State<_CalendarView>
     return DateTime(date.year, date.month, date.day, hour, minute);
   }
 
+  double get _dayViewTimeSlotContentHeight =>
+      _timeIntervalHeight * _horizontalLinesCount!;
+
+  bool _isValidDayViewTimeSlotY(double y) {
+    final double contentY = _scrollController!.offset + y;
+    return contentY < _dayViewTimeSlotContentHeight;
+  }
+
   DateTime? _getDateFromPosition(double x, double y, double timeLabelWidth) {
     double cellWidth = 0;
     double cellHeight = 0;
@@ -13043,9 +13246,7 @@ class _CalendarViewState extends State<_CalendarView>
       case CalendarView.week:
       case CalendarView.workWeek:
         {
-          if (y >= _timeIntervalHeight * _horizontalLinesCount! ||
-              x > width ||
-              x < 0) {
+          if (!_isValidDayViewTimeSlotY(y) || x > width || x < 0) {
             return null;
           }
           cellWidth = width / widget.visibleDates.length;
