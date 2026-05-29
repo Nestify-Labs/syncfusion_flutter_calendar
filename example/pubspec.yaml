@@ -1,0 +1,19 @@
+name: calendar_example
+description: "A Calendar widget example project."
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.0
+
+flutter:
+  uses-material-design: true
+
+dependencies:
+  flutter:
+    sdk: flutter
+  syncfusion_flutter_calendar:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
