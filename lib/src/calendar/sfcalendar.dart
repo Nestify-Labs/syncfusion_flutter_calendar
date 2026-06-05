@@ -205,6 +205,8 @@ class SfCalendar extends StatefulWidget {
     this.showTodayButton = false,
     this.allowViewNavigation = false,
     this.showCurrentTimeIndicator = true,
+    this.currentTimeIndicatorColor,
+    this.currentTimeIndicatorStrokeWidth = 1.0,
     this.cellEndPadding = -1,
     this.viewNavigationMode = ViewNavigationMode.snap,
     this.allowedViews,
@@ -425,6 +427,18 @@ class SfCalendar extends StatefulWidget {
   ///
   /// ```
   final bool showCurrentTimeIndicator;
+
+  /// [SF-9 Nestify patch] Independent color for the current-time indicator
+  /// line/dot, decoupled from [todayHighlightColor]. When `null`, falls back to
+  /// [todayHighlightColor] (then theme) — byte-identical to upstream, and the
+  /// month-view "today" circle / schedule today marker keep using
+  /// [todayHighlightColor] regardless. See PATCHES.md SF-9.
+  final Color? currentTimeIndicatorColor;
+
+  /// [SF-9 Nestify patch] Stroke width of the current-time indicator line.
+  /// Defaults to `1.0`, matching the previously hard-coded value — not passing
+  /// it keeps upstream behavior byte-identical. See PATCHES.md SF-9.
+  final double currentTimeIndicatorStrokeWidth;
 
   /// Defines the view for the [SfCalendar].
   ///

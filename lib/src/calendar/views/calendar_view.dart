@@ -10354,11 +10354,15 @@ class _CalendarViewState extends State<_CalendarView>
           widget.calendar.timeSlotViewSettings,
           isTimelineView,
           widget.visibleDates,
-          widget.calendar.todayHighlightColor ??
+          // [SF-9 Nestify patch] current-time 线颜色优先取独立的
+          // currentTimeIndicatorColor，回退 todayHighlightColor（再回退 theme）。
+          widget.calendar.currentTimeIndicatorColor ??
+              widget.calendar.todayHighlightColor ??
               widget.calendarTheme.todayHighlightColor,
           _isRTL,
           _currentTimeNotifier,
           widget.calendar.timeZone ?? '',
+          widget.calendar.currentTimeIndicatorStrokeWidth,
         ),
         size: Size(width, height),
       ),
@@ -15296,6 +15300,7 @@ class _CurrentTimeIndicator extends CustomPainter {
     this.isRTL,
     ValueNotifier<int> repaintNotifier,
     this.timeZone,
+    this.currentTimeStrokeWidth,
   ) : super(repaint: repaintNotifier);
   final double timeIntervalSize;
   final TimeSlotViewSettings timeSlotViewSettings;
@@ -15305,6 +15310,9 @@ class _CurrentTimeIndicator extends CustomPainter {
   final Color? todayHighlightColor;
   final bool isRTL;
   final String timeZone;
+
+  /// [SF-9 Nestify patch] current-time 指示线线宽（默认 1.0，上游硬编码值）。
+  final double currentTimeStrokeWidth;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -15357,7 +15365,7 @@ class _CurrentTimeIndicator extends CustomPainter {
     final Paint painter =
         Paint()
           ..color = todayHighlightColor!
-          ..strokeWidth = 1
+          ..strokeWidth = currentTimeStrokeWidth
           ..isAntiAlias = true
           ..style = PaintingStyle.fill;
     if (isTimelineView) {
