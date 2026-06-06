@@ -155,6 +155,16 @@ class _AgendaViewLayoutState extends State<AgendaViewLayout> {
       }
     }
 
+    // [SF-10 Nestify patch] Schedule(list) view current-time 线颜色：仅 schedule
+    // 视图（scheduleViewSettings != null，排除 month agenda）且 showCurrentTimeIndicator
+    // 开启时启用，复用 SF-9 的 currentTimeIndicatorColor（回退 todayHighlightColor）。
+    final Color? scheduleCurrentTimeColor =
+        widget.scheduleViewSettings != null &&
+                widget.calendar.showCurrentTimeIndicator
+            ? (widget.calendar.currentTimeIndicatorColor ??
+                widget.calendarTheme.todayHighlightColor)
+            : null;
+
     return _AgendaViewRenderWidget(
       widget.monthViewSettings,
       widget.scheduleViewSettings,
@@ -174,6 +184,7 @@ class _AgendaViewLayoutState extends State<AgendaViewLayout> {
       widget.width,
       widget.height,
       widget.placeholderTextStyle,
+      currentTimeIndicatorColor: scheduleCurrentTimeColor,
       widgets: _children,
     );
   }
@@ -292,6 +303,7 @@ class _AgendaViewRenderWidget extends MultiChildRenderObjectWidget {
     this.width,
     this.height,
     this.placeholderTextStyle, {
+    this.currentTimeIndicatorColor,
     List<Widget> widgets = const <Widget>[],
   }) : super(children: widgets);
 
@@ -314,6 +326,9 @@ class _AgendaViewRenderWidget extends MultiChildRenderObjectWidget {
   final double height;
   final TextStyle placeholderTextStyle;
 
+  /// [SF-10 Nestify patch] Schedule(list) view 当前时刻线颜色（null = 不绘制）。
+  final Color? currentTimeIndicatorColor;
+
   @override
   _AgendaViewRenderObject createRenderObject(BuildContext context) {
     return _AgendaViewRenderObject(
@@ -335,6 +350,7 @@ class _AgendaViewRenderWidget extends MultiChildRenderObjectWidget {
       width,
       height,
       placeholderTextStyle,
+      currentTimeIndicatorColor,
     );
   }
 
@@ -360,7 +376,8 @@ class _AgendaViewRenderWidget extends MultiChildRenderObjectWidget {
       ..appointmentCollection = appointmentCollection
       ..width = width
       ..height = height
-      ..placeholderTextStyle = placeholderTextStyle;
+      ..placeholderTextStyle = placeholderTextStyle
+      ..currentTimeIndicatorColor = currentTimeIndicatorColor;
   }
 }
 
@@ -384,6 +401,7 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
     this._width,
     this._height,
     this._placeholderTextStyle,
+    this._currentTimeIndicatorColor,
   );
 
   final bool isMobilePlatform;
@@ -411,6 +429,21 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
     }
 
     _placeholderTextStyle = value;
+    markNeedsPaint();
+  }
+
+  /// [SF-10 Nestify patch] Schedule(list) view 的当前时刻指示线颜色。
+  /// null 时不绘制；仅在 selectedDate == today 的 agenda 列表生效。
+  Color? _currentTimeIndicatorColor;
+
+  Color? get currentTimeIndicatorColor => _currentTimeIndicatorColor;
+
+  set currentTimeIndicatorColor(Color? value) {
+    if (_currentTimeIndicatorColor == value) {
+      return;
+    }
+
+    _currentTimeIndicatorColor = value;
     markNeedsPaint();
   }
 
@@ -783,6 +816,62 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
         child = childAfter(child);
       }
     }
+    _paintCurrentTimeIndicator(context.canvas, offset);
+  }
+
+  /// [SF-10 Nestify patch] 在「今天」的 agenda 列表绘制当前时刻红线（Schedule
+  /// list view 的 "Now" 指示）。位置取第一个 startTime 在当前时刻之后的事件上缘；
+  /// 若当天事件全部已开始，则画在最后一个事件下缘。仅当
+  /// [currentTimeIndicatorColor] 非 null 且 selectedDate == today 时绘制
+  /// （默认 null → 不绘制，上游行为字节一致）。
+  void _paintCurrentTimeIndicator(Canvas canvas, Offset offset) {
+    final Color? indicatorColor = _currentTimeIndicatorColor;
+    if (indicatorColor == null || selectedDate == null) {
+      return;
+    }
+    final DateTime now = DateTime.now();
+    if (!isSameDate(selectedDate, now)) {
+      return;
+    }
+    double? lineTop;
+    for (int i = 0; i < appointmentCollection.length; i++) {
+      final AppointmentView view = appointmentCollection[i];
+      if (view.appointment == null || view.appointmentRect == null) {
+        continue;
+      }
+      if (view.appointment!.actualStartTime.isAfter(now)) {
+        lineTop = view.appointmentRect!.shift(offset).top;
+        break;
+      }
+    }
+    // 当天事件全部已开始：把红线画在最后一个事件下缘。
+    if (lineTop == null) {
+      for (int i = appointmentCollection.length - 1; i >= 0; i--) {
+        final AppointmentView view = appointmentCollection[i];
+        if (view.appointment == null || view.appointmentRect == null) {
+          continue;
+        }
+        lineTop = view.appointmentRect!.shift(offset).bottom;
+        break;
+      }
+    }
+    if (lineTop == null) {
+      return;
+    }
+    final Paint indicatorPaint =
+        Paint()
+          ..color = indicatorColor
+          ..strokeWidth = 2.5
+          ..isAntiAlias = true
+          ..style = PaintingStyle.fill;
+    final double left = offset.dx;
+    final double right = offset.dx + size.width;
+    canvas.drawCircle(Offset(left + 5, lineTop), 4, indicatorPaint);
+    canvas.drawLine(
+      Offset(left, lineTop),
+      Offset(right, lineTop),
+      indicatorPaint,
+    );
   }
 
   @override

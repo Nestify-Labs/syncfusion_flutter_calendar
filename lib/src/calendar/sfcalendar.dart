@@ -207,6 +207,7 @@ class SfCalendar extends StatefulWidget {
     this.showCurrentTimeIndicator = true,
     this.currentTimeIndicatorColor,
     this.currentTimeIndicatorStrokeWidth = 1.0,
+    this.scheduleViewNoEventsLabel,
     this.cellEndPadding = -1,
     this.viewNavigationMode = ViewNavigationMode.snap,
     this.allowedViews,
@@ -439,6 +440,10 @@ class SfCalendar extends StatefulWidget {
   /// Defaults to `1.0`, matching the previously hard-coded value — not passing
   /// it keeps upstream behavior byte-identical. See PATCHES.md SF-9.
   final double currentTimeIndicatorStrokeWidth;
+
+  /// [SF-10 Nestify patch] Schedule(list) view「今日无事件」空态的自定义文案。
+  /// null 时回退 `SfLocalizations.noEventsCalendarLabel`（上游默认，字节一致）。
+  final String? scheduleViewNoEventsLabel;
 
   /// Defines the view for the [SfCalendar].
   ///
@@ -7210,6 +7215,15 @@ class _SfCalendarState extends State<SfCalendar>
     double displayDateHighlightHeight,
     double padding,
   ) {
+    // [SF-10 Nestify patch] 今天无事件时，"No events" 高亮行也叠当前时刻红线
+    // （对齐 Google list view）。复用 SF-9 的 currentTimeIndicatorColor + 全局
+    // showCurrentTimeIndicator 开关；仅 currentDisplayDate == today 时绘制。
+    final Color? nowLineColor =
+        widget.currentTimeIndicatorColor ?? _calendarTheme.todayHighlightColor;
+    final bool showNowLine =
+        widget.showCurrentTimeIndicator &&
+        nowLineColor != null &&
+        isSameDate(currentDisplayDate, DateTime.now());
     return MouseRegion(
       onEnter: (PointerEnterEvent event) {
         _pointerEnterEvent(
@@ -7257,26 +7271,58 @@ class _SfCalendarState extends State<SfCalendar>
               isRTL ? viewHeaderWidth : 0,
               0,
             ),
-            child: CustomPaint(
-              painter: _ScheduleLabelPainter(
-                currentDisplayDate,
-                null,
-                widget.scheduleViewSettings,
-                false,
-                isRTL,
-                _locale,
-                _useMobilePlatformUI,
-                _agendaViewNotifier,
-                _calendarTheme,
-                _themeData,
-                _localizations,
-                _textScaleFactor,
-                isDisplayDate: true,
-              ),
-              size: Size(
-                _minWidth - viewHeaderWidth,
-                displayDateHighlightHeight,
-              ),
+            child: Stack(
+              children: <Widget>[
+                CustomPaint(
+                  painter: _ScheduleLabelPainter(
+                    currentDisplayDate,
+                    null,
+                    widget.scheduleViewSettings,
+                    false,
+                    isRTL,
+                    _locale,
+                    _useMobilePlatformUI,
+                    _agendaViewNotifier,
+                    _calendarTheme,
+                    _themeData,
+                    _localizations,
+                    _textScaleFactor,
+                    isDisplayDate: true,
+                    noEventsLabel: widget.scheduleViewNoEventsLabel,
+                  ),
+                  size: Size(
+                    _minWidth - viewHeaderWidth,
+                    displayDateHighlightHeight,
+                  ),
+                ),
+                // [SF-10 Nestify patch] 今天无事件高亮行的当前时刻红线（红点 + 横线）。
+                if (showNowLine)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Row(
+                          children: <Widget>[
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: nowLineColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            Expanded(
+                              child: Container(
+                                height: 2.5,
+                                color: nowLineColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -11940,6 +11986,7 @@ class _ScheduleLabelPainter extends CustomPainter {
     this._localizations,
     this.textScaleFactor, {
     this.isDisplayDate = false,
+    this.noEventsLabel,
   }) : super(repaint: isDisplayDate ? agendaViewNotifier : null);
 
   final DateTime startDate;
@@ -11955,6 +12002,9 @@ class _ScheduleLabelPainter extends CustomPainter {
   final ThemeData themeData;
   final bool isDisplayDate;
   final double textScaleFactor;
+
+  /// [SF-10 Nestify patch] host 自定义「无事件」文案；null 回退 localizations。
+  final String? noEventsLabel;
   final TextPainter _textPainter = TextPainter();
   final Paint _backgroundPainter = Paint();
 
@@ -11978,7 +12028,7 @@ class _ScheduleLabelPainter extends CustomPainter {
   void _addDisplayDateLabel(Canvas canvas, Size size) {
     /// Add the localized add new appointment text for display date view.
     final TextSpan span = TextSpan(
-      text: _localizations.noEventsCalendarLabel,
+      text: noEventsLabel ?? _localizations.noEventsCalendarLabel,
       style: themeData.textTheme.bodyMedium!.merge(
         scheduleViewSettings.weekHeaderSettings.weekTextStyle ??
             scheduleViewSettings.placeholderTextStyle,
