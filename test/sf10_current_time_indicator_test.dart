@@ -97,7 +97,10 @@ void main() {
       expect(scheduleCurrentTimeIndicatorY(views, _at(7, 48)), 55);
     });
 
-    test('spanned (multi-day) events are skipped like all-day', () {
+    test('spanned event continuing from a previous day is skipped like all-day',
+        () {
+      // A multi-day event whose start day is NOT today renders as a banner
+      // ("Day N/M" / "Until …") and must not anchor the line.
       final List<AppointmentView> views = <AppointmentView>[
         _view(
           start: _day.subtract(const Duration(hours: 1)), // yesterday 23:00
@@ -109,6 +112,33 @@ void main() {
       ];
 
       expect(scheduleCurrentTimeIndicatorY(views, _at(7, 48)), 55);
+    });
+
+    test(
+        'multi-day event starting today anchors the line on its first day '
+        '(issue #2031 multi-day edge case)', () {
+      // Repro: now 4:31, multi-day "abc" starts today 10 AM and ends 3 days
+      // later. Its first-day segment shows "10 AM" and must anchor the line
+      // ABOVE it (event not yet started), matching Google Calendar list view —
+      // not below it (the pre-fix behavior put the line at the bottom).
+      final List<AppointmentView> views = <AppointmentView>[
+        _view(
+          start: _at(0),
+          end: _at(23, 59),
+          isAllDay: true,
+          top: 0,
+          bottom: 50,
+        ), // xxx: all-day banner
+        _view(
+          start: _at(10), // today 10 AM
+          end: _day.add(const Duration(days: 3, hours: 10)), // +3d 10 AM
+          isSpanned: true,
+          top: 55,
+          bottom: 125,
+        ), // abc Day 1/4
+      ];
+
+      expect(scheduleCurrentTimeIndicatorY(views, _at(4, 31)), 55);
     });
 
     test('only all-day events -> line below the last one', () {

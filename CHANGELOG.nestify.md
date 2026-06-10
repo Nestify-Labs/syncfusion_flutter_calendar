@@ -2,6 +2,23 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.6 — SF-10 fix: multi-day event anchors the current-time line on its start day
+
+Base: upstream `33.2.8`
+
+- SF-10 (refine): a multi-day (spanned) timed appointment now anchors the
+  schedule(list) view current-time line on **its start day** instead of being
+  skipped on every day. On the first day the appointment shows a real start
+  clock time (e.g. "10 AM") and is treated like a regular timed event, so at
+  4:31 with a 10 AM–start multi-day event the line sits *above* it (matching
+  Google Calendar list view) rather than below it (Nestify issue #2031
+  multi-day edge case). Non-start days (middle / end "Until …" segments) and
+  all-day events still never anchor the line. Start-day detection uses
+  `isSameDate(actualStartTime, now)`, valid because the line only draws on
+  today's agenda. Unit coverage added in
+  `test/sf10_current_time_indicator_test.dart` (start-day repro + clarified
+  continuation-day skip).
+
 ## v33.2.8+nestify.5 — SF-10 fix: current-time line end-time anchor + SF-11 agenda all-day ordering
 
 Base: upstream `33.2.8`

@@ -1638,10 +1638,15 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
 /// （相对 agenda 列表内容，未含 paint offset）。返回 null = 不绘制。
 ///
 /// 对齐 Google Calendar list view 语义（Nestify issue #2031）：
-/// - all-day / 跨天事件不参与定位（红线永远不画在它们上方）；
-/// - 红线画在第一个「尚未结束」（actualEndTime > now）的 timed 事件上缘——
-///   正在进行中的事件是「当前」而非「已过去」，红线在其上方；
-/// - 当天 timed 事件全部结束（或没有 timed 事件）时，画在最后一个事件下缘。
+/// - all-day 事件不参与定位（红线永远不画在它们上方）；
+/// - 跨天 timed 事件只有「首日」段带真实开始时间（列表里显示如 "10 AM"），按
+///   timed 事件参与定位；非首日段（中间天 / 末日「Until …」）与 all-day 一样
+///   当 banner，不锚定红线（Nestify issue #2031 multi-day edge case）。红线仅
+///   在「今天」绘制，故用 [now] 的日期判定首日：首日 ==
+///   isSameDate(actualStartTime, now)；
+/// - 红线画在第一个「尚未结束」（actualEndTime > now）的可定位 timed 事件
+///   上缘——正在进行中的事件是「当前」而非「已过去」，红线在其上方；
+/// - 当天可定位 timed 事件全部结束（或没有）时，画在最后一个事件下缘。
 @visibleForTesting
 double? scheduleCurrentTimeIndicatorY(
   List<AppointmentView> appointmentCollection,
@@ -1659,14 +1664,19 @@ double? scheduleCurrentTimeIndicatorY(
     final bool isSpanned =
         appointment.actualEndTime.day != appointment.actualStartTime.day ||
         appointment.isSpanned;
-    if (appointment.isAllDay || isSpanned) {
+    // 跨天 timed 事件只在「首日」段带真实开始时间，按 timed 事件参与定位；
+    // 非首日段（中间天 / 末日「Until …」）与 all-day 一样当 banner，不锚定。
+    // 红线仅在今天绘制，故 now 的日期即当前 agenda 日期，可据此判定首日。
+    final bool isStartDay = isSameDate(appointment.actualStartTime, now);
+    final bool isBanner = appointment.isAllDay || (isSpanned && !isStartDay);
+    if (isBanner) {
       continue;
     }
     if (appointment.actualEndTime.isAfter(now)) {
       return view.appointmentRect!.top;
     }
   }
-  // 当天 timed 事件全部已结束（或仅有 all-day/跨天事件）：红线画在最后
-  // 一个事件下缘。
+  // 当天可定位 timed 事件全部已结束（或仅有 all-day / 非首日跨天段）：红线
+  // 画在最后一个事件下缘。
   return lastBottom;
 }
