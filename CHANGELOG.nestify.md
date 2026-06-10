@@ -2,6 +2,46 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.5 — SF-10 fix: current-time line end-time anchor + SF-11 agenda all-day ordering
+
+Base: upstream `33.2.8`
+
+- SF-10 (refine): the schedule(list) view current-time indicator now anchors
+  above the first timed appointment whose `actualEndTime` is after now —
+  an ongoing event (start <= now < end) is treated as "current", not "past"
+  (Nestify issue #2031, matching Google Calendar list view). All-day and
+  multi-day appointments no longer anchor the line above them. Position
+  decision extracted to testable `scheduleCurrentTimeIndicatorY` with unit
+  coverage in `test/sf10_current_time_indicator_test.dart`.
+- SF-11 (new): add `SfCalendar.agendaSortAllDayAppointmentsFirst` (default
+  `false`, upstream-identical). When `true`, schedule(list) view and month
+  agenda day lists order all-day appointments above spanned (multi-day)
+  appointments — fixes a multi-day timed appointment's first day ranking
+  above single-day all-day appointments (Nestify issue #2029). The five
+  duplicated per-day triple-sort sites are consolidated into
+  `AppointmentHelper.sortAgendaAppointments`. Unit coverage in
+  `test/sf11_agenda_sort_test.dart`.
+
+## v33.2.8+nestify.4 — SF-10 schedule view current-time line
+
+Base: upstream `33.2.8`
+
+- SF-10 (new): draw a current-time "Now" indicator line in the schedule(list)
+  view, reusing SF-9's `currentTimeIndicatorColor` + `showCurrentTimeIndicator`.
+  Also overlays the line on the "No events" today highlight row. Addresses
+  Nestify issue #1977 schedule-view follow-up. (Tagged at commit `801698c`;
+  entry backfilled in nestify.5.)
+
+## v33.2.8+nestify.3 — SF-9 current-time indicator color & stroke width
+
+Base: upstream `33.2.8`
+
+- SF-9 (new): add `SfCalendar.currentTimeIndicatorColor` (default `null`) and
+  `currentTimeIndicatorStrokeWidth` (default `1.0`) to decouple the
+  current-time line from `todayHighlightColor`. Defaults are byte-identical to
+  upstream. Fixes Nestify issue #1977. (Tagged at commit `fa577e9`; entry
+  backfilled in nestify.5.)
+
 ## v33.2.8+nestify.2 — SF-8 timeline coordinate push + query API
 
 Base: upstream `33.2.8`

@@ -209,23 +209,10 @@ class _AgendaViewLayoutState extends State<AgendaViewLayout> {
     final bool isLargerScheduleUI =
         widget.scheduleViewSettings != null && !useMobilePlatformUI;
 
-    widget.appointments!.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          app1.actualStartTime.compareTo(app2.actualStartTime),
-    );
-    widget.appointments!.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          AppointmentHelper.orderAppointmentsAscending(
-            app1.isAllDay,
-            app2.isAllDay,
-          ),
-    );
-    widget.appointments!.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          AppointmentHelper.orderAppointmentsAscending(
-            app1.isSpanned,
-            app2.isSpanned,
-          ),
+    // SF-11: shared agenda day ordering (all-day first when enabled).
+    AppointmentHelper.sortAgendaAppointments(
+      widget.appointments!,
+      allDayFirst: widget.calendar.agendaSortAllDayAppointmentsFirst,
     );
     final double agendaItemHeight =
         CalendarViewHelper.getScheduleAppointmentHeight(
@@ -820,9 +807,8 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
   }
 
   /// [SF-10 Nestify patch] 在「今天」的 agenda 列表绘制当前时刻红线（Schedule
-  /// list view 的 "Now" 指示）。位置取第一个 startTime 在当前时刻之后的事件上缘；
-  /// 若当天事件全部已开始，则画在最后一个事件下缘。仅当
-  /// [currentTimeIndicatorColor] 非 null 且 selectedDate == today 时绘制
+  /// list view 的 "Now" 指示）。位置由 [scheduleCurrentTimeIndicatorY] 决定。
+  /// 仅当 [currentTimeIndicatorColor] 非 null 且 selectedDate == today 时绘制
   /// （默认 null → 不绘制，上游行为字节一致）。
   void _paintCurrentTimeIndicator(Canvas canvas, Offset offset) {
     final Color? indicatorColor = _currentTimeIndicatorColor;
@@ -833,31 +819,14 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
     if (!isSameDate(selectedDate, now)) {
       return;
     }
-    double? lineTop;
-    for (int i = 0; i < appointmentCollection.length; i++) {
-      final AppointmentView view = appointmentCollection[i];
-      if (view.appointment == null || view.appointmentRect == null) {
-        continue;
-      }
-      if (view.appointment!.actualStartTime.isAfter(now)) {
-        lineTop = view.appointmentRect!.shift(offset).top;
-        break;
-      }
-    }
-    // 当天事件全部已开始：把红线画在最后一个事件下缘。
-    if (lineTop == null) {
-      for (int i = appointmentCollection.length - 1; i >= 0; i--) {
-        final AppointmentView view = appointmentCollection[i];
-        if (view.appointment == null || view.appointmentRect == null) {
-          continue;
-        }
-        lineTop = view.appointmentRect!.shift(offset).bottom;
-        break;
-      }
-    }
-    if (lineTop == null) {
+    final double? indicatorY = scheduleCurrentTimeIndicatorY(
+      appointmentCollection,
+      now,
+    );
+    if (indicatorY == null) {
       return;
     }
+    final double lineTop = indicatorY + offset.dy;
     final Paint indicatorPaint =
         Paint()
           ..color = indicatorColor
@@ -1663,4 +1632,41 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
       }
     }
   }
+}
+
+/// [SF-10 Nestify patch] 计算 Schedule(list) 视图当前时刻红线的 Y 坐标
+/// （相对 agenda 列表内容，未含 paint offset）。返回 null = 不绘制。
+///
+/// 对齐 Google Calendar list view 语义（Nestify issue #2031）：
+/// - all-day / 跨天事件不参与定位（红线永远不画在它们上方）；
+/// - 红线画在第一个「尚未结束」（actualEndTime > now）的 timed 事件上缘——
+///   正在进行中的事件是「当前」而非「已过去」，红线在其上方；
+/// - 当天 timed 事件全部结束（或没有 timed 事件）时，画在最后一个事件下缘。
+@visibleForTesting
+double? scheduleCurrentTimeIndicatorY(
+  List<AppointmentView> appointmentCollection,
+  DateTime now,
+) {
+  double? lastBottom;
+  for (int i = 0; i < appointmentCollection.length; i++) {
+    final AppointmentView view = appointmentCollection[i];
+    final CalendarAppointment? appointment = view.appointment;
+    if (appointment == null || view.appointmentRect == null) {
+      continue;
+    }
+    lastBottom = view.appointmentRect!.bottom;
+    // 与 agenda 布局的行高判定保持同一跨天语义（_updateAppointmentDetails）。
+    final bool isSpanned =
+        appointment.actualEndTime.day != appointment.actualStartTime.day ||
+        appointment.isSpanned;
+    if (appointment.isAllDay || isSpanned) {
+      continue;
+    }
+    if (appointment.actualEndTime.isAfter(now)) {
+      return view.appointmentRect!.top;
+    }
+  }
+  // 当天 timed 事件全部已结束（或仅有 all-day/跨天事件）：红线画在最后
+  // 一个事件下缘。
+  return lastBottom;
 }

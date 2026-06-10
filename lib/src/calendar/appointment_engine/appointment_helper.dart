@@ -809,6 +809,55 @@ class AppointmentHelper {
     return boolValue1.compareTo(boolValue2);
   }
 
+  /// [SF-11] Nestify patch: shared per-day ordering for the schedule (list)
+  /// view and the month agenda view. Upstream sorted by start time, then
+  /// `isAllDay`, then `isSpanned` — making `isSpanned` the highest priority
+  /// key, so a multi-day timed appointment's first day ranked above
+  /// single-day all-day appointments. When [allDayFirst] is `true` the
+  /// `isAllDay` key is applied last instead (all-day → spanned → timed).
+  /// `false` reproduces the upstream sort sequence byte-identically.
+  static void sortAgendaAppointments(
+    List<CalendarAppointment> appointments, {
+    required bool allDayFirst,
+  }) {
+    appointments.sort(
+      (CalendarAppointment app1, CalendarAppointment app2) =>
+          app1.actualStartTime.compareTo(app2.actualStartTime),
+    );
+    if (allDayFirst) {
+      _sortByBoolKeyAscending(
+        appointments,
+        (CalendarAppointment app) => app.isSpanned,
+      );
+      _sortByBoolKeyAscending(
+        appointments,
+        (CalendarAppointment app) => app.isAllDay,
+      );
+    } else {
+      _sortByBoolKeyAscending(
+        appointments,
+        (CalendarAppointment app) => app.isAllDay,
+      );
+      _sortByBoolKeyAscending(
+        appointments,
+        (CalendarAppointment app) => app.isSpanned,
+      );
+    }
+  }
+
+  /// [SF-11] Nestify patch: re-sorts placing appointments whose [key] is
+  /// `true` first; ties keep the current list order (small day lists hit
+  /// Dart's stable insertion-sort path, matching upstream's reliance on it).
+  static void _sortByBoolKeyAscending(
+    List<CalendarAppointment> appointments,
+    bool Function(CalendarAppointment) key,
+  ) {
+    appointments.sort(
+      (CalendarAppointment app1, CalendarAppointment app2) =>
+          orderAppointmentsAscending(key(app1), key(app2)),
+    );
+  }
+
   static AppointmentView _getAppointmentView(
     CalendarAppointment appointment,
     List<AppointmentView> appointmentCollection,

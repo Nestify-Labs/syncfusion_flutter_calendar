@@ -227,6 +227,7 @@ class SfCalendar extends StatefulWidget {
     this.onDragUpdate,
     this.onDragEnd,
     this.deferAppointmentDragOnLongPress = false,
+    this.agendaSortAllDayAppointmentsFirst = false,
     this.onTimelineCoordinatesChanged,
   }) : assert(firstDayOfWeek >= 1 && firstDayOfWeek <= 7),
        assert(headerHeight >= 0),
@@ -2119,6 +2120,17 @@ class SfCalendar extends StatefulWidget {
   /// `_handleLongPressStart`). Default `false` preserves upstream behavior.
   final bool deferAppointmentDragOnLongPress;
 
+  /// [SF-11] Nestify patch: when `true`, the per-day appointment lists in the
+  /// schedule (list) view and the month agenda view order all-day
+  /// appointments before spanned (multi-day) appointments. Upstream applies
+  /// the `isSpanned` sort as the final (highest priority) key, which places a
+  /// multi-day timed appointment's first day above single-day all-day
+  /// appointments. With this flag the `isAllDay` key is applied last instead,
+  /// yielding: all-day → spanned timed → regular timed (by start time).
+  ///
+  /// Default `false` preserves upstream ordering byte-identically.
+  final bool agendaSortAllDayAppointmentsFirst;
+
   /// [SF-8] Nestify patch: push timeline coordinate snapshot to the host on
   /// every layout-mutation point (all-day height change / scroll settle /
   /// view-mode or intervalHeight change / all-day height animation tick).
@@ -3911,23 +3923,10 @@ class _SfCalendarState extends State<SfCalendar>
                   panelHeight +
                   appointmentViewPadding +
                   dividerHeight) {
-        currentAppointments.sort(
-          (CalendarAppointment app1, CalendarAppointment app2) =>
-              app1.actualStartTime.compareTo(app2.actualStartTime),
-        );
-        currentAppointments.sort(
-          (CalendarAppointment app1, CalendarAppointment app2) =>
-              AppointmentHelper.orderAppointmentsAscending(
-                app1.isAllDay,
-                app2.isAllDay,
-              ),
-        );
-        currentAppointments.sort(
-          (CalendarAppointment app1, CalendarAppointment app2) =>
-              AppointmentHelper.orderAppointmentsAscending(
-                app1.isSpanned,
-                app2.isSpanned,
-              ),
+        // SF-11: shared agenda day ordering (all-day first when enabled).
+        AppointmentHelper.sortAgendaAppointments(
+          currentAppointments,
+          allDayFirst: widget.agendaSortAllDayAppointmentsFirst,
         );
 
         if ((!_isRTL && viewPadding >= position.dx) ||
@@ -6770,23 +6769,10 @@ class _SfCalendarState extends State<SfCalendar>
               : -(previousHeight + height - interSectPoint);
 
       interSectPoint += appointmentViewPadding;
-      currentAppointments.sort(
-        (CalendarAppointment app1, CalendarAppointment app2) =>
-            app1.actualStartTime.compareTo(app2.actualStartTime),
-      );
-      currentAppointments.sort(
-        (CalendarAppointment app1, CalendarAppointment app2) =>
-            AppointmentHelper.orderAppointmentsAscending(
-              app1.isAllDay,
-              app2.isAllDay,
-            ),
-      );
-      currentAppointments.sort(
-        (CalendarAppointment app1, CalendarAppointment app2) =>
-            AppointmentHelper.orderAppointmentsAscending(
-              app1.isSpanned,
-              app2.isSpanned,
-            ),
+      // SF-11: shared agenda day ordering (all-day first when enabled).
+      AppointmentHelper.sortAgendaAppointments(
+        currentAppointments,
+        allDayFirst: widget.agendaSortAllDayAppointmentsFirst,
       );
 
       /// Add appointment view to the current views collection.
@@ -10255,23 +10241,10 @@ class _SfCalendarState extends State<SfCalendar>
       return <dynamic>[];
     }
 
-    agendaAppointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          app1.actualStartTime.compareTo(app2.actualStartTime),
-    );
-    agendaAppointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          AppointmentHelper.orderAppointmentsAscending(
-            app1.isAllDay,
-            app2.isAllDay,
-          ),
-    );
-    agendaAppointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          AppointmentHelper.orderAppointmentsAscending(
-            app1.isSpanned,
-            app2.isSpanned,
-          ),
+    // SF-11: shared agenda day ordering (all-day first when enabled).
+    AppointmentHelper.sortAgendaAppointments(
+      agendaAppointments,
+      allDayFirst: widget.agendaSortAllDayAppointmentsFirst,
     );
 
     int index = -1;
@@ -10410,23 +10383,10 @@ class _SfCalendarState extends State<SfCalendar>
           widget.timeZone,
           currentSelectedDate,
         );
-    agendaAppointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          app1.actualStartTime.compareTo(app2.actualStartTime),
-    );
-    agendaAppointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          AppointmentHelper.orderAppointmentsAscending(
-            app1.isAllDay,
-            app2.isAllDay,
-          ),
-    );
-    agendaAppointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          AppointmentHelper.orderAppointmentsAscending(
-            app1.isSpanned,
-            app2.isSpanned,
-          ),
+    // SF-11: shared agenda day ordering (all-day first when enabled).
+    AppointmentHelper.sortAgendaAppointments(
+      agendaAppointments,
+      allDayFirst: widget.agendaSortAllDayAppointmentsFirst,
     );
 
     /// Each appointment have top padding and it used to show the space
