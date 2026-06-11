@@ -228,6 +228,7 @@ class SfCalendar extends StatefulWidget {
     this.onDragEnd,
     this.deferAppointmentDragOnLongPress = false,
     this.agendaSortAllDayAppointmentsFirst = false,
+    this.allDayPanelChronologicalSort = false,
     this.onTimelineCoordinatesChanged,
   }) : assert(firstDayOfWeek >= 1 && firstDayOfWeek <= 7),
        assert(headerHeight >= 0),
@@ -2120,16 +2121,35 @@ class SfCalendar extends StatefulWidget {
   /// `_handleLongPressStart`). Default `false` preserves upstream behavior.
   final bool deferAppointmentDragOnLongPress;
 
-  /// [SF-11] Nestify patch: when `true`, the per-day appointment lists in the
-  /// schedule (list) view and the month agenda view order all-day
-  /// appointments before spanned (multi-day) appointments. Upstream applies
-  /// the `isSpanned` sort as the final (highest priority) key, which places a
-  /// multi-day timed appointment's first day above single-day all-day
-  /// appointments. With this flag the `isAllDay` key is applied last instead,
-  /// yielding: all-day → spanned timed → regular timed (by start time).
+  /// [SF-11] Nestify patch: when `true`, the per-day appointment lists in
+  /// the schedule (list) view and the month agenda view are ordered
+  /// chronologically by each appointment's ORIGINAL (un-clipped) start
+  /// instant — matching Google Calendar's list view: an all-day appointment
+  /// anchors at its start-day midnight, so it precedes that day's timed
+  /// appointments and follows any still-running appointment that started on
+  /// an earlier day. Equal instants order all-day first, then longer span
+  /// first, then input order. Upstream instead applies the `isSpanned` sort
+  /// as the final (highest priority) key, which places a multi-day timed
+  /// appointment above single-day all-day appointments on every day of its
+  /// span.
   ///
+  /// See `AppointmentHelper.sortAgendaAppointments` for the comparator.
   /// Default `false` preserves upstream ordering byte-identically.
   final bool agendaSortAllDayAppointmentsFirst;
+
+  /// [SF-12] Nestify patch: when `true`, the day/week/workWeek all-day panel
+  /// stacks its rows in the same chronological order as
+  /// [agendaSortAllDayAppointmentsFirst] (original start instant ascending,
+  /// all-day first then longer span on equal instants) instead of the
+  /// upstream order (visible-window-clamped start-day index, then raw
+  /// duration descending, then data-source insertion order). The upstream
+  /// keys make the row order depend on the visible-window width — a 1-day
+  /// Day view clamps every earlier-started appointment to index 0 and falls
+  /// through to duration, ordering differently from the 3-day / week widths
+  /// for the same data.
+  ///
+  /// Default `false` preserves upstream ordering byte-identically.
+  final bool allDayPanelChronologicalSort;
 
   /// [SF-8] Nestify patch: push timeline coordinate snapshot to the host on
   /// every layout-mutation point (all-day height change / scroll settle /
@@ -5474,38 +5494,47 @@ class _SfCalendarState extends State<SfCalendar>
     //// Calculate the appointment view position.
     _updateAppointmentViewPosition();
 
-    //// Sort the appointment view based on appointment view width.
-    _allDayAppointmentViewCollection.sort((
-      AppointmentView app1,
-      AppointmentView app2,
-    ) {
-      if (app1.appointment != null && app2.appointment != null) {
-        return AppointmentHelper.getDifference(
-                  app2.appointment!.startTime,
-                  app2.appointment!.endTime,
-                ) >
-                AppointmentHelper.getDifference(
-                  app1.appointment!.startTime,
-                  app1.appointment!.endTime,
-                )
-            ? 1
-            : 0;
-      }
+    // SF-12: chronological all-day panel stacking (window-width independent),
+    // matching the SF-11 schedule-list order. Default false keeps the
+    // upstream sorts below byte-identical.
+    if (widget.allDayPanelChronologicalSort) {
+      AppointmentHelper.sortAllDayPanelChronologically(
+        _allDayAppointmentViewCollection,
+      );
+    } else {
+      //// Sort the appointment view based on appointment view width.
+      _allDayAppointmentViewCollection.sort((
+        AppointmentView app1,
+        AppointmentView app2,
+      ) {
+        if (app1.appointment != null && app2.appointment != null) {
+          return AppointmentHelper.getDifference(
+                    app2.appointment!.startTime,
+                    app2.appointment!.endTime,
+                  ) >
+                  AppointmentHelper.getDifference(
+                    app1.appointment!.startTime,
+                    app1.appointment!.endTime,
+                  )
+              ? 1
+              : 0;
+        }
 
-      return 0;
-    });
+        return 0;
+      });
 
-    //// Sort the appointment view based on appointment view start position.
-    _allDayAppointmentViewCollection.sort((
-      AppointmentView app1,
-      AppointmentView app2,
-    ) {
-      if (app1.appointment != null && app2.appointment != null) {
-        return app1.startIndex.compareTo(app2.startIndex);
-      }
+      //// Sort the appointment view based on appointment view start position.
+      _allDayAppointmentViewCollection.sort((
+        AppointmentView app1,
+        AppointmentView app2,
+      ) {
+        if (app1.appointment != null && app2.appointment != null) {
+          return app1.startIndex.compareTo(app2.startIndex);
+        }
 
-      return 0;
-    });
+        return 0;
+      });
+    }
 
     final List<List<AppointmentView>> allDayAppointmentView =
         <List<AppointmentView>>[];

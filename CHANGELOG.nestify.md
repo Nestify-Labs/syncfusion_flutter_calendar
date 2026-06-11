@@ -2,6 +2,42 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.7 — SF-11 v2 chronological agenda sort + SF-12 all-day panel ordering
+
+Base: upstream `33.2.8`
+
+- SF-11 (v2, semantics change behind the existing flag): with
+  `agendaSortAllDayAppointmentsFirst: true` the schedule(list) / month agenda
+  per-day lists are now ordered **chronologically by the ORIGINAL (un-clipped)
+  start instant** — matching Google Calendar's list view (Nestify issue #2031
+  edge cases C/D): an all-day appointment anchors at its start-day midnight,
+  so a multi-day timed appointment that started on an earlier day ranks above
+  today's all-day appointments (its ending-day "Until …" segment included),
+  while one that starts later the same day ranks below them. Equal instants
+  order all-day first, then longer span first, then input order (explicit
+  index tiebreak — deterministic beyond Dart's 32-element insertion-sort
+  path). The previous group-based order (all-day → spanned → timed) is gone;
+  `false` still reproduces upstream byte-identically. Tests rewritten in
+  `test/sf11_agenda_sort_test.dart` (#2029 start-day case still holds under
+  the chronological rule; continuation-day expectation flipped per #2031 C.1;
+  dataset C fixtures incl. the Jun-12 "Until X is NOT always first" case).
+- SF-12 (new): add `SfCalendar.allDayPanelChronologicalSort` (default `false`,
+  upstream-identical). When `true`, the day/week/workWeek all-day panel stacks
+  rows with the same chronological comparator as SF-11 v2
+  (`AppointmentHelper.sortAllDayPanelChronologically`), replacing the upstream
+  `window-clamped startIndex → raw duration desc (asymmetric 0/1 comparator)
+  → data-source insertion order` keys. Fixes Nestify issue #2031 edge cases
+  C.2 / D: the 1-day Day view no longer orders differently from the 3-day /
+  week widths, and the panel matches the schedule list and Google's all-day
+  section (dataset D: e, d, c, b). Unit coverage in
+  `test/sf12_allday_panel_sort_test.dart`.
+- SF-10 (tests only, no algorithm change): added chronologically-interleaved
+  fixtures from dataset C pinning the red-line position under the SF-11 v2
+  layout — 7:57 (line above the ongoing start-day segment, matching the
+  Google reference screenshot), 1:00 AM (an ongoing ending-day "Until" row
+  stays un-anchorable), and a banners-only day (line at the last banner's
+  bottom edge).
+
 ## v33.2.8+nestify.6 — SF-10 fix: multi-day event anchors the current-time line on its start day
 
 Base: upstream `33.2.8`

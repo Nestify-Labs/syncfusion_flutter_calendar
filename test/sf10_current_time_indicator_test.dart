@@ -168,4 +168,101 @@ void main() {
       expect(scheduleCurrentTimeIndicatorY(views, _at(7, 48)), 55);
     });
   });
+
+  group('SF-10 with SF-11 chronological layout (issue #2031 dataset C)', () {
+    // Dataset C laid out in the SF-11 chronological order on Jun 10:
+    // xyz (timed Jun 8 2AM -> Jun 10 2AM, ending-day "Ends 2 AM" banner) ->
+    // aaa (all-day Jun 10-12) -> 123 (timed Jun 10 6AM -> Jun 12 6AM,
+    // start-day segment) -> abc (timed Jun 10 10AM -> Jun 14 10AM,
+    // start-day segment).
+    final DateTime jun8 = DateTime(2026, 6, 8);
+    final DateTime jun10 = DateTime(2026, 6, 10);
+
+    List<AppointmentView> datasetC() => <AppointmentView>[
+          _view(
+            start: jun8.add(const Duration(hours: 2)),
+            end: jun10.add(const Duration(hours: 2)),
+            isSpanned: true,
+            top: 0,
+            bottom: 50,
+          ), // xyz: "Ends 2 AM" banner row at the very top
+          _view(
+            start: jun10,
+            end: jun10.add(const Duration(days: 2)),
+            isAllDay: true,
+            isSpanned: true,
+            top: 55,
+            bottom: 105,
+          ), // aaa: all-day banner
+          _view(
+            start: jun10.add(const Duration(hours: 6)),
+            end: jun10.add(const Duration(hours: 54)),
+            isSpanned: true,
+            top: 110,
+            bottom: 180,
+          ), // 123: start-day segment, shows "6 AM"
+          _view(
+            start: jun10.add(const Duration(hours: 10)),
+            end: jun10.add(const Duration(hours: 106)),
+            isSpanned: true,
+            top: 185,
+            bottom: 255,
+          ), // abc: start-day segment, shows "10 AM"
+        ];
+
+    test('7:57 — line above the ongoing start-day segment "123", below the '
+        'banner block (matches the Google reference screenshot)', () {
+      expect(
+        scheduleCurrentTimeIndicatorY(
+          datasetC(),
+          jun10.add(const Duration(hours: 7, minutes: 57)),
+        ),
+        110, // top of 123
+      );
+    });
+
+    test('1:00 AM — the ongoing "Until 2 AM" ending-day row stays '
+        'un-anchorable (banner): the line anchors on the first start-day '
+        'timed segment instead of jumping above the top row '
+        '(empirically verified against Google Calendar agenda 2026-06-10: '
+        'with an ongoing "Until 11:40 PM" row at the top, Google draws the '
+        'line below the banner block, above the first start-day segment)', () {
+      expect(
+        scheduleCurrentTimeIndicatorY(
+          datasetC(),
+          jun10.add(const Duration(hours: 1)),
+        ),
+        110, // top of 123 — NOT 0 (above xyz)
+      );
+    });
+
+    test('day with only banners (all-day + non-start-day segments) -> line '
+        'falls to the bottom of the last banner row', () {
+      final List<AppointmentView> views = <AppointmentView>[
+        _view(
+          start: jun8.add(const Duration(hours: 2)),
+          end: jun10.add(const Duration(hours: 2)),
+          isSpanned: true,
+          top: 0,
+          bottom: 50,
+        ), // xyz ending-day banner
+        _view(
+          start: jun10,
+          end: jun10.add(const Duration(days: 2)),
+          isAllDay: true,
+          isSpanned: true,
+          top: 55,
+          bottom: 105,
+        ), // aaa all-day banner
+      ];
+
+      expect(
+        scheduleCurrentTimeIndicatorY(
+          views,
+          jun10.add(const Duration(hours: 1)),
+        ),
+        105, // bottom of the last banner
+      );
+    });
+  });
 }

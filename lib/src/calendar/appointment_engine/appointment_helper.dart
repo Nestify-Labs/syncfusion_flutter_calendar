@@ -810,39 +810,133 @@ class AppointmentHelper {
   }
 
   /// [SF-11] Nestify patch: shared per-day ordering for the schedule (list)
-  /// view and the month agenda view. Upstream sorted by start time, then
-  /// `isAllDay`, then `isSpanned` — making `isSpanned` the highest priority
-  /// key, so a multi-day timed appointment's first day ranked above
-  /// single-day all-day appointments. When [allDayFirst] is `true` the
-  /// `isAllDay` key is applied last instead (all-day → spanned → timed).
-  /// `false` reproduces the upstream sort sequence byte-identically.
+  /// view and the month agenda view.
+  ///
+  /// Upstream sorts by start time, then `isAllDay`, then `isSpanned` —
+  /// making `isSpanned` the highest-priority key, so a multi-day timed
+  /// appointment ranked above single-day all-day appointments on every day
+  /// of its span (Nestify issue #2029).
+  ///
+  /// When [allDayFirst] is `true` the list is instead ordered
+  /// chronologically by the appointment's ORIGINAL (un-clipped) start
+  /// instant, matching Google Calendar's list view (Nestify issue #2031
+  /// edge cases C/D):
+  ///   1. `actualStartTime` ascending — an all-day appointment carries its
+  ///      start-day midnight, so it precedes that day's timed appointments
+  ///      and follows any still-running appointment that started on an
+  ///      earlier day;
+  ///   2. all-day before timed at an equal start instant;
+  ///   3. longer total span first at an equal instant and kind (mirrors the
+  ///      month-grid stacking);
+  ///   4. original list position (explicit stability for any list size —
+  ///      no reliance on Dart's small-list insertion-sort path).
+  ///
+  /// Day-relative rendering ("Ends X" on the last day, banner on middle
+  /// days) is a presentation concern and intentionally does NOT influence
+  /// this order. `false` reproduces the upstream sort sequence
+  /// byte-identically.
   static void sortAgendaAppointments(
     List<CalendarAppointment> appointments, {
     required bool allDayFirst,
   }) {
+    if (allDayFirst) {
+      _sortChronologicalAllDayFirst(appointments);
+      return;
+    }
     appointments.sort(
       (CalendarAppointment app1, CalendarAppointment app2) =>
           app1.actualStartTime.compareTo(app2.actualStartTime),
     );
-    if (allDayFirst) {
-      _sortByBoolKeyAscending(
-        appointments,
-        (CalendarAppointment app) => app.isSpanned,
+    _sortByBoolKeyAscending(
+      appointments,
+      (CalendarAppointment app) => app.isAllDay,
+    );
+    _sortByBoolKeyAscending(
+      appointments,
+      (CalendarAppointment app) => app.isSpanned,
+    );
+  }
+
+  /// [SF-11] Nestify patch: single-pass total-order comparator backing
+  /// [sortAgendaAppointments] with `allDayFirst: true`. Sorts a decorated
+  /// index list so ties deterministically keep the input order regardless
+  /// of list size.
+  static void _sortChronologicalAllDayFirst(
+    List<CalendarAppointment> appointments,
+  ) {
+    final List<int> order =
+        List<int>.generate(appointments.length, (int i) => i);
+    order.sort((int i, int j) {
+      final int byKeys = _compareChronologicalAllDayFirst(
+        appointments[i],
+        appointments[j],
       );
-      _sortByBoolKeyAscending(
-        appointments,
-        (CalendarAppointment app) => app.isAllDay,
-      );
-    } else {
-      _sortByBoolKeyAscending(
-        appointments,
-        (CalendarAppointment app) => app.isAllDay,
-      );
-      _sortByBoolKeyAscending(
-        appointments,
-        (CalendarAppointment app) => app.isSpanned,
-      );
+      if (byKeys != 0) {
+        return byKeys;
+      }
+      return i.compareTo(j);
+    });
+    final List<CalendarAppointment> sorted = <CalendarAppointment>[
+      for (final int index in order) appointments[index],
+    ];
+    appointments
+      ..clear()
+      ..addAll(sorted);
+  }
+
+  /// [SF-11]/[SF-12] Nestify patch: shared chronological key sequence —
+  /// original start instant ascending, all-day first on equal instants,
+  /// longer span first on equal instant and kind. Returns 0 on a full tie
+  /// so callers can apply their own deterministic tiebreak.
+  static int _compareChronologicalAllDayFirst(
+    CalendarAppointment app1,
+    CalendarAppointment app2,
+  ) {
+    final int byStart = app1.actualStartTime.compareTo(app2.actualStartTime);
+    if (byStart != 0) {
+      return byStart;
     }
+    final int byAllDay =
+        orderAppointmentsAscending(app1.isAllDay, app2.isAllDay);
+    if (byAllDay != 0) {
+      return byAllDay;
+    }
+    // Longer span first: at an equal start instant compare ends descending.
+    return app2.actualEndTime.compareTo(app1.actualEndTime);
+  }
+
+  /// [SF-12] Nestify patch: chronological ordering for the day/week/workWeek
+  /// all-day panel — same key sequence as [sortAgendaAppointments] with
+  /// `allDayFirst: true`, applied to the panel's [AppointmentView] pool so
+  /// the row stacking matches the schedule list and is independent of the
+  /// visible-window width. Views without an appointment (pooled leftovers)
+  /// order after every populated view, keeping their relative order.
+  static void sortAllDayPanelChronologically(
+    List<AppointmentView> appointmentViews,
+  ) {
+    final List<int> order =
+        List<int>.generate(appointmentViews.length, (int i) => i);
+    order.sort((int i, int j) {
+      final CalendarAppointment? app1 = appointmentViews[i].appointment;
+      final CalendarAppointment? app2 = appointmentViews[j].appointment;
+      if (app1 == null || app2 == null) {
+        if ((app1 == null) != (app2 == null)) {
+          return app1 == null ? 1 : -1;
+        }
+        return i.compareTo(j);
+      }
+      final int byKeys = _compareChronologicalAllDayFirst(app1, app2);
+      if (byKeys != 0) {
+        return byKeys;
+      }
+      return i.compareTo(j);
+    });
+    final List<AppointmentView> sorted = <AppointmentView>[
+      for (final int index in order) appointmentViews[index],
+    ];
+    appointmentViews
+      ..clear()
+      ..addAll(sorted);
   }
 
   /// [SF-11] Nestify patch: re-sorts placing appointments whose [key] is

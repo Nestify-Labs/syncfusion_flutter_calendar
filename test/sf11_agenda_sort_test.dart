@@ -1,11 +1,16 @@
 // [SF-11] Nestify patch unit tests — pure-logic coverage for the shared
 // agenda/schedule per-day ordering (`AppointmentHelper.sortAgendaAppointments`).
 //
-// Regression anchor: Nestify issue #2029 — in the schedule (list) view a
-// multi-day timed appointment's first day must rank BELOW single-day all-day
-// appointments when `allDayFirst` is enabled. Upstream applies `isSpanned`
-// as the final (highest priority) sort key, which placed the spanned timed
-// appointment above the all-day one.
+// Regression anchors:
+// - Nestify issue #2029 — in the schedule (list) view a multi-day timed
+//   appointment's first day must rank BELOW single-day all-day appointments
+//   when `allDayFirst` is enabled (its start time is after their midnight
+//   anchor).
+// - Nestify issue #2031 edge cases C/D — ordering is chronological by the
+//   ORIGINAL start instant (Google Calendar list-view rule): an appointment
+//   that started on an earlier day ranks above today's all-day appointments;
+//   one that started later the same day ranks below them. Day-relative
+//   rendering ("Ends X" / banner) never influences the order.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/appointment_engine/appointment_helper.dart';
@@ -38,7 +43,7 @@ void main() {
     test('issue #2029 repro: all-day ranks above spanned timed first day '
         'when allDayFirst is true', () {
       // "cd": timed multi-day, Jun 9 7AM -> Jun 10 7AM (spanned).
-      // "a": single-day all-day on Jun 9.
+      // "a": single-day all-day on Jun 9 (midnight anchor precedes 7AM).
       final List<CalendarAppointment> appointments = <CalendarAppointment>[
         _appt(
           'cd',
@@ -77,8 +82,8 @@ void main() {
       expect(_subjects(appointments), <String>['cd', 'a']);
     });
 
-    test('full order with allDayFirst: all-day -> spanned timed -> timed by '
-        'start time', () {
+    test('full order with allDayFirst: chronological by original start; '
+        'all-day anchors midnight; longer span first on equal instants', () {
       final List<CalendarAppointment> appointments = <CalendarAppointment>[
         _appt(
           'timed-9am',
@@ -97,8 +102,6 @@ void main() {
           end: _day.add(const Duration(hours: 7)),
         ),
         _appt('allday', start: _day, end: _day, isAllDay: true),
-        // Multi-day all-day (e.g. "bbb" spanning Jun 10-12 in the issue
-        // screenshots, seen on its continuation day).
         _appt(
           'allday-spanned',
           start: _day,
@@ -113,31 +116,114 @@ void main() {
         allDayFirst: true,
       );
 
+      // Chronological: midnight all-day pair (longer span first) -> 6AM
+      // timed -> 7AM spanned timed (spanned-ness no longer jumps the queue)
+      // -> 9AM timed.
       expect(_subjects(appointments), <String>[
         'allday-spanned',
         'allday',
-        'spanned-7am',
         'timed-6am',
+        'spanned-7am',
         'timed-9am',
       ]);
     });
 
-    test('continuation day: all-day spanned still ranks above timed spanned '
-        '(matches pre-patch screenshot order on Jun 10)', () {
+    test('issue #2031 C.1: ending-day spanned timed ranks above all-day '
+        'when it started on an earlier day', () {
       final DateTime nextDay = _day.add(const Duration(days: 1));
       final List<CalendarAppointment> appointments = <CalendarAppointment>[
-        // "cd" ending 7AM on Jun 10.
+        // "bbb" all-day Jun 10-12 (midnight anchor on Jun 10).
+        _appt(
+          'bbb',
+          start: nextDay,
+          end: nextDay.add(const Duration(days: 2)),
+          isAllDay: true,
+          isSpanned: true,
+        ),
+        // "cd" timed Jun 9 7AM -> Jun 10 7AM, seen on its ending day Jun 10:
+        // its ORIGINAL start (Jun 9 7AM) precedes bbb's Jun 10 midnight.
         _appt(
           'cd',
           start: _day.add(const Duration(hours: 7)),
           end: nextDay.add(const Duration(hours: 7)),
           isSpanned: true,
         ),
-        // "bbb" all-day Jun 10-12.
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(
+        appointments,
+        allDayFirst: true,
+      );
+
+      expect(_subjects(appointments), <String>['cd', 'bbb']);
+    });
+
+    test('issue #2031 dataset C, Jun 10: earlier-started spanned timed -> '
+        'all-day -> later same-day spanned starts in time order', () {
+      // Screenshot dataset: xyz timed Jun 8 2AM -> Jun 10 2AM; aaa all-day
+      // Jun 10-12; 123 timed Jun 10 6AM -> Jun 12 6AM; abc timed
+      // Jun 10 10AM -> Jun 14 10AM. Expected (Google): xyz, aaa, 123, abc.
+      final DateTime jun8 = DateTime(2026, 6, 8);
+      final DateTime jun10 = DateTime(2026, 6, 10);
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
         _appt(
-          'bbb',
-          start: nextDay,
-          end: nextDay.add(const Duration(days: 2)),
+          'aaa',
+          start: jun10,
+          end: jun10.add(const Duration(days: 2)),
+          isAllDay: true,
+          isSpanned: true,
+        ),
+        _appt(
+          '123',
+          start: jun10.add(const Duration(hours: 6)),
+          end: jun10.add(const Duration(hours: 54)),
+          isSpanned: true,
+        ),
+        _appt(
+          'abc',
+          start: jun10.add(const Duration(hours: 10)),
+          end: jun10.add(const Duration(hours: 106)),
+          isSpanned: true,
+        ),
+        _appt(
+          'xyz',
+          start: jun8.add(const Duration(hours: 2)),
+          end: jun10.add(const Duration(hours: 2)),
+          isSpanned: true,
+        ),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(
+        appointments,
+        allDayFirst: true,
+      );
+
+      expect(_subjects(appointments), <String>['xyz', 'aaa', '123', 'abc']);
+    });
+
+    test('issue #2031 dataset C, Jun 12: an "Until X" ending day does NOT '
+        'always rank first — chronological start order decides', () {
+      // On Jun 12: aaa (all-day, anchored Jun 10 midnight) precedes 123
+      // (timed, started Jun 10 6AM, ending Jun 12 6AM) — matches the Google
+      // reference screenshot: aaa -> 123 "Until 6am" -> abc.
+      final DateTime jun10 = DateTime(2026, 6, 10);
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appt(
+          '123',
+          start: jun10.add(const Duration(hours: 6)),
+          end: jun10.add(const Duration(hours: 54)),
+          isSpanned: true,
+        ),
+        _appt(
+          'abc',
+          start: jun10.add(const Duration(hours: 10)),
+          end: jun10.add(const Duration(hours: 106)),
+          isSpanned: true,
+        ),
+        _appt(
+          'aaa',
+          start: jun10,
+          end: jun10.add(const Duration(days: 2)),
           isAllDay: true,
           isSpanned: true,
         ),
@@ -148,7 +234,7 @@ void main() {
         allDayFirst: true,
       );
 
-      expect(_subjects(appointments), <String>['bbb', 'cd']);
+      expect(_subjects(appointments), <String>['aaa', '123', 'abc']);
     });
 
     test('ties keep input order (stable for small day lists)', () {
@@ -178,6 +264,31 @@ void main() {
         'timed-1',
         'timed-2',
       ]);
+    });
+
+    test('ties keep input order beyond 32 items (no insertion-sort '
+        'dependence)', () {
+      // 40 identical-key appointments: Dart switches List.sort to an
+      // unstable dual-pivot quicksort above 32 elements — the explicit
+      // original-index tiebreak must keep input order anyway.
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        for (int i = 0; i < 40; i++)
+          _appt(
+            'timed-$i',
+            start: _day.add(const Duration(hours: 9)),
+            end: _day.add(const Duration(hours: 10)),
+          ),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(
+        appointments,
+        allDayFirst: true,
+      );
+
+      expect(
+        _subjects(appointments),
+        <String>[for (int i = 0; i < 40; i++) 'timed-$i'],
+      );
     });
   });
 }
