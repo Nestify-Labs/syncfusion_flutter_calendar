@@ -6588,6 +6588,9 @@ class _CalendarViewState extends State<_CalendarView>
           /* Animates the all day panel height when
               expanding or collapsing */
         });
+        // [SF-8 fix #2148] expander 动画每帧推送坐标，让 host 自绘 ruler /
+        // overlay 跟随 all-day 面板展开/收起高度变化 (Part B of #2148 fix).
+        _pushTimelineCoordinatesForCurrentView();
       });
     }
 
@@ -6804,7 +6807,7 @@ class _CalendarViewState extends State<_CalendarView>
       widget.calendar.timeSlotViewSettings.timeRulerSize,
       widget.view,
     );
-    final double pinnedAllDay = isDayView ? 0 : _allDayHeight;
+    final double pinnedAllDay = isDayView ? 0 : _resolvePinnedAllDayHeight();
     final int columns = math.max(1, widget.visibleDates.length);
     final double viewportTopInBody = viewHeaderHeight + pinnedAllDay;
     final double viewportWidthPerColumn =
@@ -6830,6 +6833,42 @@ class _CalendarViewState extends State<_CalendarView>
     if (sfState == null) return;
     // ignore: avoid_dynamic_calls
     (sfState as dynamic).dispatchTimelineCoordinatesToHostInternal(coords);
+  }
+
+  /// [SF-8 fix #2148] 解析非 day 视图 pinned all-day overlay 的当前像素高度。
+  ///
+  /// 收起态返回 capped `_allDayHeight`；展开态（含动画过程）按展开进度叠加
+  /// `allDayPanelHeight - _allDayHeight` 增量，与 build 中 `allDayExpanderHeight`
+  /// (`_allDayHeight + panelHeight * _allDayExpanderAnimation.value`) 同源，
+  /// 保证 host 坐标系与 Syncfusion 实际 overlay 布局一致。
+  ///
+  /// 旧实现固定用 capped `_allDayHeight`(≤60)，展开后真实 overlay 高度
+  /// (= `allDayPanelHeight`, 无 cap) 被低估，host 自绘 12AM ruler 落进
+  /// overlay 内被全天事件遮挡 (#2148)。drag-math 路径本就区分 `_isExpanded`，
+  /// 此处对齐其语义但用动画值以平滑跟随展开/收起过渡。
+  double _resolvePinnedAllDayHeight() {
+    final double fullAllDayPanelHeight =
+        _updateCalendarStateDetails.allDayPanelHeight;
+    final double expanderExtra = fullAllDayPanelHeight > _allDayHeight
+        ? (fullAllDayPanelHeight - _allDayHeight) *
+            (_allDayExpanderAnimation?.value ?? 0.0)
+        : 0.0;
+    return _allDayHeight + expanderExtra;
+  }
+
+  /// [SF-8 fix #2148] 以"当前可见页"判定并推送时间线坐标。
+  ///
+  /// 供 all-day expander 动画 listener 复用：`isCurrentView` 判定与
+  /// `_heightAnimation` listener 中既有逻辑一致。展开/收起由独立的
+  /// `_expanderAnimationController` 驱动，不在 `_pushTimelineCoordinates`
+  /// 的 4 个原调用点 (`_updateAllDayHeight` / `_scrollListener` /
+  /// `didUpdateWidget` / `_heightAnimation` listener) 内，故需在 expander
+  /// 动画每帧补推送，否则 host 收不到展开后的新坐标。
+  void _pushTimelineCoordinatesForCurrentView() {
+    final bool isCurrentView =
+        _updateCalendarStateDetails.currentViewVisibleDates ==
+            widget.visibleDates;
+    _pushTimelineCoordinates(isCurrentView);
   }
 
   /// Convert global Y → SfCalendar-local Y → time-of-day via
@@ -7521,6 +7560,9 @@ class _CalendarViewState extends State<_CalendarView>
         /*Animates the all day panel when it's expanding or
         collapsing*/
       });
+      // [SF-8 fix #2148] expander 动画每帧推送坐标，让 host 自绘 ruler /
+      // overlay 跟随 all-day 面板展开/收起高度变化 (Part B of #2148 fix).
+      _pushTimelineCoordinatesForCurrentView();
     });
 
     if (!CalendarViewHelper.isDayView(
