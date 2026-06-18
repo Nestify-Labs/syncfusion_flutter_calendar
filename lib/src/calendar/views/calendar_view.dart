@@ -6807,7 +6807,15 @@ class _CalendarViewState extends State<_CalendarView>
       widget.calendar.timeSlotViewSettings.timeRulerSize,
       widget.view,
     );
-    final double pinnedAllDay = isDayView ? 0 : _resolvePinnedAllDayHeight();
+    // Day view: all-day 是 pinned overlay，被 _addDayView 撑进顶部固定带
+    // (viewHeaderHeight 撑高到 _allDayHeight，本文件 _addDayView: timeline top =
+    // max(_allDayHeight, viewHeaderHeight) + allDayExpanderHeight)。必须把撑高出
+    // viewHeader 的部分计入 pinnedAllDay，否则 host 自绘 12AM ruler 落在原始
+    // viewHeader 处、戳进比它高的 all-day 区 (#2148 Day view 续)。
+    // Week/3-Day: all-day pinned overlay 走 _resolvePinnedAllDayHeight(展开态真高度)。
+    final double pinnedAllDay = isDayView
+        ? math.max(0.0, _allDayHeight - viewHeaderHeight)
+        : _resolvePinnedAllDayHeight();
     final int columns = math.max(1, widget.visibleDates.length);
     final double viewportTopInBody = viewHeaderHeight + pinnedAllDay;
     final double viewportWidthPerColumn =
@@ -7199,18 +7207,21 @@ class _CalendarViewState extends State<_CalendarView>
         widget.view,
       );
       if (isCurrentView) {
-        _allDayHeight =
-            _kAllDayLayoutHeight > viewHeaderHeight &&
-                    _updateCalendarStateDetails.allDayPanelHeight >
-                        viewHeaderHeight
-                ? _updateCalendarStateDetails.allDayPanelHeight >
-                        _kAllDayLayoutHeight
-                    ? _kAllDayLayoutHeight
-                    : _updateCalendarStateDetails.allDayPanelHeight
-                : viewHeaderHeight;
-        if (_allDayHeight < _updateCalendarStateDetails.allDayPanelHeight) {
-          _allDayHeight += kAllDayAppointmentHeight;
-        }
+        // [SF-13 #2148] Day view all-day section 全展开：高度取 panel 完整高度
+        // (floor 到 viewHeaderHeight)，随全天事件数增长全部显示、不溢出、不收起。
+        //
+        // upstream 原逻辑把 _allDayHeight capped 到 _kAllDayLayoutHeight(60) 再
+        // 单次 += kAllDayAppointmentHeight(一行余量)，对 N>=5 个全天事件饱和在
+        // 80px → 多出的 tile 被画到 section box 之外、落进 timeline 区与 12AM
+        // 标签重叠 (N=maxPosition 时 position==maxPosition 临界点令 expander 不
+        // 触发、越界裁剪守卫 maxPositions>position 也失效)。
+        //
+        // 全展开后 panelHeight = allDayPanelHeight - _allDayHeight = 0，
+        // expander 自然不触发；section box == 全部 tile 高度，无 tile 越界。
+        _allDayHeight = math.max(
+          _updateCalendarStateDetails.allDayPanelHeight,
+          viewHeaderHeight,
+        );
       } else {
         _allDayHeight = viewHeaderHeight;
       }
