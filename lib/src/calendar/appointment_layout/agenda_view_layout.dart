@@ -1680,3 +1680,55 @@ double? scheduleCurrentTimeIndicatorY(
   // 画在最后一个事件下缘。
   return lastBottom;
 }
+
+/// [SF-14 Nestify patch] Compute the Schedule(list) current-time indicator Y
+/// from appointment data using the same row-height rules as
+/// [_AgendaViewRenderObject._updateAppointmentDetails].
+double? scheduleCurrentTimeIndicatorYForAppointments(
+  List<CalendarAppointment> appointments,
+  DateTime now, {
+  required double agendaItemHeight,
+  required double agendaAllDayItemHeight,
+  required bool isLargerScheduleUI,
+  required bool allDayFirst,
+}) {
+  if (appointments.isEmpty) {
+    return null;
+  }
+
+  final List<CalendarAppointment> sortedAppointments =
+      List<CalendarAppointment>.of(appointments);
+  AppointmentHelper.sortAgendaAppointments(
+    sortedAppointments,
+    allDayFirst: allDayFirst,
+  );
+
+  const double padding = 5;
+  double yPosition = padding;
+  double? lastBottom;
+  for (int i = 0; i < sortedAppointments.length; i++) {
+    final CalendarAppointment appointment = sortedAppointments[i];
+    final bool isSpanned =
+        appointment.actualEndTime.day != appointment.actualStartTime.day ||
+        appointment.isSpanned;
+    final double appointmentHeight =
+        (appointment.isAllDay || isSpanned) && !isLargerScheduleUI
+            ? agendaAllDayItemHeight
+            : agendaItemHeight;
+    final double top = yPosition;
+    final double bottom = top + appointmentHeight;
+    lastBottom = bottom;
+    yPosition += appointmentHeight + padding;
+
+    final bool isStartDay = isSameDate(appointment.actualStartTime, now);
+    final bool isBanner = appointment.isAllDay || (isSpanned && !isStartDay);
+    if (isBanner) {
+      continue;
+    }
+    if (appointment.actualEndTime.isAfter(now)) {
+      return top;
+    }
+  }
+
+  return lastBottom;
+}

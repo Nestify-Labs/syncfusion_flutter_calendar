@@ -41,13 +41,26 @@ AppointmentView _view({
     );
 }
 
+CalendarAppointment _appointment({
+  required DateTime start,
+  required DateTime end,
+  bool isAllDay = false,
+  bool isSpanned = false,
+}) {
+  return CalendarAppointment(
+    startTime: start,
+    endTime: end,
+    isAllDay: isAllDay,
+    isSpanned: isSpanned,
+  );
+}
+
 DateTime _at(int hour, [int minute = 0]) =>
     DateTime(_day.year, _day.month, _day.day, hour, minute);
 
 void main() {
   group('SF-10 scheduleCurrentTimeIndicatorY', () {
-    test('ongoing timed event keeps the line above it (issue #2031 repro)',
-        () {
+    test('ongoing timed event keeps the line above it (issue #2031 repro)', () {
       // 7:48 — "ccc" (7–8 AM) has started but not ended. The line must sit
       // at ccc's top edge, not below it.
       final List<AppointmentView> views = <AppointmentView>[
@@ -97,25 +110,26 @@ void main() {
       expect(scheduleCurrentTimeIndicatorY(views, _at(7, 48)), 55);
     });
 
-    test('spanned event continuing from a previous day is skipped like all-day',
-        () {
-      // A multi-day event whose start day is NOT today renders as a banner
-      // ("Day N/M" / "Until …") and must not anchor the line.
-      final List<AppointmentView> views = <AppointmentView>[
-        _view(
-          start: _day.subtract(const Duration(hours: 1)), // yesterday 23:00
-          end: _at(1),
-          top: 0,
-          bottom: 50,
-        ),
-        _view(start: _at(7), end: _at(8), top: 55, bottom: 125),
-      ];
-
-      expect(scheduleCurrentTimeIndicatorY(views, _at(7, 48)), 55);
-    });
-
     test(
-        'multi-day event starting today anchors the line on its first day '
+      'spanned event continuing from a previous day is skipped like all-day',
+      () {
+        // A multi-day event whose start day is NOT today renders as a banner
+        // ("Day N/M" / "Until …") and must not anchor the line.
+        final List<AppointmentView> views = <AppointmentView>[
+          _view(
+            start: _day.subtract(const Duration(hours: 1)), // yesterday 23:00
+            end: _at(1),
+            top: 0,
+            bottom: 50,
+          ),
+          _view(start: _at(7), end: _at(8), top: 55, bottom: 125),
+        ];
+
+        expect(scheduleCurrentTimeIndicatorY(views, _at(7, 48)), 55);
+      },
+    );
+
+    test('multi-day event starting today anchors the line on its first day '
         '(issue #2031 multi-day edge case)', () {
       // Repro: now 4:31, multi-day "abc" starts today 10 AM and ends 3 days
       // later. Its first-day segment shows "10 AM" and must anchor the line
@@ -179,36 +193,36 @@ void main() {
     final DateTime jun10 = DateTime(2026, 6, 10);
 
     List<AppointmentView> datasetC() => <AppointmentView>[
-          _view(
-            start: jun8.add(const Duration(hours: 2)),
-            end: jun10.add(const Duration(hours: 2)),
-            isSpanned: true,
-            top: 0,
-            bottom: 50,
-          ), // xyz: "Ends 2 AM" banner row at the very top
-          _view(
-            start: jun10,
-            end: jun10.add(const Duration(days: 2)),
-            isAllDay: true,
-            isSpanned: true,
-            top: 55,
-            bottom: 105,
-          ), // aaa: all-day banner
-          _view(
-            start: jun10.add(const Duration(hours: 6)),
-            end: jun10.add(const Duration(hours: 54)),
-            isSpanned: true,
-            top: 110,
-            bottom: 180,
-          ), // 123: start-day segment, shows "6 AM"
-          _view(
-            start: jun10.add(const Duration(hours: 10)),
-            end: jun10.add(const Duration(hours: 106)),
-            isSpanned: true,
-            top: 185,
-            bottom: 255,
-          ), // abc: start-day segment, shows "10 AM"
-        ];
+      _view(
+        start: jun8.add(const Duration(hours: 2)),
+        end: jun10.add(const Duration(hours: 2)),
+        isSpanned: true,
+        top: 0,
+        bottom: 50,
+      ), // xyz: "Ends 2 AM" banner row at the very top
+      _view(
+        start: jun10,
+        end: jun10.add(const Duration(days: 2)),
+        isAllDay: true,
+        isSpanned: true,
+        top: 55,
+        bottom: 105,
+      ), // aaa: all-day banner
+      _view(
+        start: jun10.add(const Duration(hours: 6)),
+        end: jun10.add(const Duration(hours: 54)),
+        isSpanned: true,
+        top: 110,
+        bottom: 180,
+      ), // 123: start-day segment, shows "6 AM"
+      _view(
+        start: jun10.add(const Duration(hours: 10)),
+        end: jun10.add(const Duration(hours: 106)),
+        isSpanned: true,
+        top: 185,
+        bottom: 255,
+      ), // abc: start-day segment, shows "10 AM"
+    ];
 
     test('7:57 — line above the ongoing start-day segment "123", below the '
         'banner block (matches the Google reference screenshot)', () {
@@ -262,6 +276,47 @@ void main() {
           jun10.add(const Duration(hours: 1)),
         ),
         105, // bottom of the last banner
+      );
+    });
+  });
+
+  group('SF-14 scheduleCurrentTimeIndicatorYForAppointments', () {
+    test('matches schedule row-height math for all-day and timed rows', () {
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appointment(start: _at(0), end: _at(23, 59), isAllDay: true),
+        _appointment(start: _at(7), end: _at(8)),
+        _appointment(start: _at(18), end: _at(19)),
+      ];
+
+      expect(
+        scheduleCurrentTimeIndicatorYForAppointments(
+          appointments,
+          _at(7, 30),
+          agendaItemHeight: 70,
+          agendaAllDayItemHeight: 50,
+          isLargerScheduleUI: false,
+          allDayFirst: true,
+        ),
+        60, // 5px top padding + 50px all-day row + 5px gap
+      );
+    });
+
+    test('web schedule uses regular item height for all-day rows', () {
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appointment(start: _at(0), end: _at(23, 59), isAllDay: true),
+        _appointment(start: _at(7), end: _at(8)),
+      ];
+
+      expect(
+        scheduleCurrentTimeIndicatorYForAppointments(
+          appointments,
+          _at(7, 30),
+          agendaItemHeight: 70,
+          agendaAllDayItemHeight: 50,
+          isLargerScheduleUI: true,
+          allDayFirst: true,
+        ),
+        80, // 5px top padding + 70px all-day row + 5px gap
       );
     });
   });

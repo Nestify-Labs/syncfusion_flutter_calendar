@@ -2,6 +2,33 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.10 — SF-14 schedule current-time scroll API
+
+Base: upstream `33.2.8`
+
+- SF-14 (new): expose `SfCalendar.onScheduleScrollApiReady?` and
+  `SfCalendarScheduleScrollApi.scrollScheduleCurrentTimeToFraction(fraction)`
+  so the host can scroll the Schedule(list) view's existing SF-10 current-time
+  indicator to a viewport fraction without reflecting Syncfusion internals.
+  `_SfCalendarState` caches the indicator's absolute bidirectional
+  `CustomScrollView` content offset while building today's row. Event rows use
+  a new testable `scheduleCurrentTimeIndicatorYForAppointments` helper that
+  mirrors the Schedule painter's appointment ordering and row-height rules;
+  the no-events row caches the same bottom-aligned line position painted by
+  SF-10. The command clamps to live scroll extents and returns `false` until
+  layout is ready or after a `jumpTo`, allowing the host retry loop to settle.
+  Fixes Nestify issue #2227 (Today in Schedule scrolls the red now line to
+  roughly 1/3 down the viewport, matching detail view #1977).
+
+## v33.2.8+nestify.9 — SF-13 day all-day overflow + pushed timeline coords
+
+Base: upstream `33.2.8`
+
+- SF-13: fixes Day(single)-view all-day overflow and 12AM ruler
+  misalignment by fully sizing the Day all-day section to its rendered all-day
+  rows and reporting the extra Day all-day band through SF-8 timeline
+  coordinates. See `PATCHES.md` SF-13 for full details.
+
 ## v33.2.8+nestify.7 — SF-11 v2 chronological agenda sort + SF-12 all-day panel ordering
 
 Base: upstream `33.2.8`
