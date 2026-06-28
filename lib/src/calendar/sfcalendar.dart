@@ -4272,6 +4272,15 @@ class _SfCalendarState extends State<SfCalendar>
 
   @override
   bool scrollScheduleCurrentTimeToFraction(double fraction) {
+    // [SF-14 FIX #2227] A view switch recreates this State; the host may briefly
+    // still hold a *disposed* State's api (the new State's api dispatch lands one
+    // post-frame later). A disposed State whose _view is still e.g. day would hit
+    // the `_view != schedule` branch below and return true -> host falsely
+    // settles -> never scrolls once the live schedule api arrives. Reject stale
+    // calls so the host keeps retrying until the live State's api is wired.
+    if (!mounted) {
+      return false;
+    }
     if (_view != CalendarView.schedule) {
       return true;
     }
@@ -4296,9 +4305,11 @@ class _SfCalendarState extends State<SfCalendar>
     }
 
     final double clampedFraction = fraction.clamp(0.0, 1.0);
-    final double target =
-        (indicatorOffset - (viewportHeight * clampedFraction))
-            .clamp(position.minScrollExtent, position.maxScrollExtent);
+    final double rawTarget = indicatorOffset - (viewportHeight * clampedFraction);
+    final double target = rawTarget.clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
     if ((position.pixels - target).abs() <= 0.5) {
       return true;
     }
@@ -7643,9 +7654,13 @@ class _SfCalendarState extends State<SfCalendar>
   }
 
   Widget addAgenda(double height, bool isRTL) {
-    // [SF-14] Rebuilt by visible Schedule rows; stale offsets must not survive
-    // appointment/view churn.
-    _scheduleCurrentTimeIndicatorScrollOffset = null;
+    // [SF-14 FIX #2227] Do NOT null the cached offset on every build. The
+    // bidirectional list reuses the today row element across the heavy rebuild
+    // churn of a view switch (3-day -> schedule), so _getItem(today) is not
+    // re-invoked and would never re-cache -> host reads null forever ->
+    // scroll-to-now never runs (first all-day event stuck at top, no red line).
+    // The cached value stays valid: the reused today row's absolute position is
+    // unchanged, and it refreshes whenever the today row genuinely rebuilds.
 
     final bool hideEmptyAgendaDays =
         widget.scheduleViewSettings.hideEmptyScheduleWeek ||
@@ -8304,9 +8319,10 @@ class _SfCalendarState extends State<SfCalendar>
   }
 
   Widget addAgendaWithLoadMore(double height, bool isRTL) {
-    // [SF-14] Rebuilt by visible Schedule rows; stale offsets must not survive
-    // appointment/view churn.
-    _scheduleCurrentTimeIndicatorScrollOffset = null;
+    // [SF-14 FIX #2227] Do NOT null the cached offset on every build (see the
+    // addAgenda note above). View-switch churn reuses the today row element, so
+    // re-nulling here without a re-cache strands the host at a null offset and
+    // scroll-to-now never runs.
 
     final bool hideEmptyAgendaDays =
         widget.scheduleViewSettings.hideEmptyScheduleWeek ||
