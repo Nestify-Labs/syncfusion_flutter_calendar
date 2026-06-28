@@ -12,6 +12,8 @@
 // Target render: A narrow + isolated on the left; B wide; C/D cascade-overlay
 // on top of B (C wide, D narrow), all offset right and overlapping B.
 
+import 'dart:ui';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/appointment_layout/appointment_layout.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_helper.dart';
@@ -63,6 +65,24 @@ CalendarAppointment _appt(
     isAllDay: isAllDay,
     isSpanned: isSpanned,
   );
+}
+
+/// Builds an [AppointmentView] whose rect is `[left, top, right, bottom]`.
+/// `hasAppointment: false` / `hasRect: false` exercise the null guards.
+AppointmentView _hitView(
+  double left,
+  double top,
+  double right,
+  double bottom, {
+  bool hasAppointment = true,
+  bool hasRect = true,
+}) {
+  return AppointmentView()
+    ..appointment = hasAppointment ? _appt(_at(8), _at(10)) : null
+    ..appointmentRect =
+        hasRect
+            ? RRect.fromLTRBR(left, top, right, bottom, const Radius.circular(4))
+            : null;
 }
 
 void main() {
@@ -195,6 +215,120 @@ void main() {
       expect(
         CascadeLayout.isEligibleTimedAppointment(_appt(_at(8), _at(10)), -1),
         isFalse,
+      );
+    });
+  });
+
+  group('SF-15 CascadeLayout.hitTest (draw-order hit testing)', () {
+    // Two overlapping rects in render order (start-asc => last entry is drawn
+    // on top): bottom [0,0,100,100], top [50,0,150,100]. The point (75, 50)
+    // lands inside both — the §0.3 overlay "压盖" case.
+    List<AppointmentView> overlapping() => <AppointmentView>[
+      _hitView(0, 0, 100, 100), // index 0 — bottom layer (drawn first)
+      _hitView(50, 0, 150, 100), // index 1 — top layer (drawn last)
+    ];
+
+    test('cascade: overlap hit returns the top (last-drawn) view', () {
+      final List<AppointmentView> views = overlapping();
+      final AppointmentView? hit = CascadeLayout.hitTest(
+        AppointmentOverlapMode.cascade,
+        views,
+        75,
+        50,
+      );
+      // Reverse scan picks the visually topmost = last in the collection.
+      expect(identical(hit, views[1]), isTrue);
+    });
+
+    test('laneFill: same overlap input returns the forward-first view '
+        '(SF-6 order unchanged)', () {
+      final List<AppointmentView> views = overlapping();
+      final AppointmentView? hit = CascadeLayout.hitTest(
+        AppointmentOverlapMode.laneFill,
+        views,
+        75,
+        50,
+      );
+      // Forward scan picks the first match — byte-identical to the old loop.
+      expect(identical(hit, views[0]), isTrue);
+    });
+
+    test('non-overlapping rects: both modes return the same single match', () {
+      final List<AppointmentView> views = overlapping();
+
+      // (25, 50) is inside index 0 only (index 1 starts at x=50).
+      expect(
+        identical(
+          CascadeLayout.hitTest(AppointmentOverlapMode.cascade, views, 25, 50),
+          views[0],
+        ),
+        isTrue,
+      );
+      expect(
+        identical(
+          CascadeLayout.hitTest(AppointmentOverlapMode.laneFill, views, 25, 50),
+          views[0],
+        ),
+        isTrue,
+      );
+
+      // (125, 50) is inside index 1 only (index 0 ends at x=100).
+      expect(
+        identical(
+          CascadeLayout.hitTest(AppointmentOverlapMode.cascade, views, 125, 50),
+          views[1],
+        ),
+        isTrue,
+      );
+      expect(
+        identical(
+          CascadeLayout.hitTest(AppointmentOverlapMode.laneFill, views, 125, 50),
+          views[1],
+        ),
+        isTrue,
+      );
+    });
+
+    test('a point outside every rect returns null in both modes', () {
+      final List<AppointmentView> views = overlapping();
+      expect(
+        CascadeLayout.hitTest(AppointmentOverlapMode.cascade, views, 500, 500),
+        isNull,
+      );
+      expect(
+        CascadeLayout.hitTest(AppointmentOverlapMode.laneFill, views, 500, 500),
+        isNull,
+      );
+    });
+
+    test('views with a null appointment or null rect are skipped', () {
+      // The topmost (last) entry covers the point but has no appointment; the
+      // next one down has a null rect. Only the bottom valid view must match,
+      // in both modes.
+      final List<AppointmentView> views = <AppointmentView>[
+        _hitView(0, 0, 100, 100), // valid, contains (50, 50)
+        _hitView(0, 0, 100, 100, hasRect: false), // null rect — skipped
+        _hitView(0, 0, 100, 100, hasAppointment: false), // null appt — skipped
+      ];
+
+      for (final AppointmentOverlapMode mode in AppointmentOverlapMode.values) {
+        expect(
+          identical(CascadeLayout.hitTest(mode, views, 50, 50), views[0]),
+          isTrue,
+          reason: 'mode $mode must skip null-appointment/null-rect views',
+        );
+      }
+    });
+
+    test('empty collection returns null', () {
+      expect(
+        CascadeLayout.hitTest(
+          AppointmentOverlapMode.cascade,
+          <AppointmentView>[],
+          10,
+          10,
+        ),
+        isNull,
       );
     });
   });

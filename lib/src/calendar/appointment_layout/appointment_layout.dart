@@ -420,19 +420,14 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
       return null;
     }
 
-    AppointmentView? selectedAppointmentView;
-    for (int i = 0; i < _appointmentCollection.length; i++) {
-      final AppointmentView appointmentView = _appointmentCollection[i];
-      if (appointmentView.appointment != null &&
-          appointmentView.appointmentRect != null &&
-          appointmentView.appointmentRect!.left <= x &&
-          appointmentView.appointmentRect!.right >= x &&
-          appointmentView.appointmentRect!.top <= y &&
-          appointmentView.appointmentRect!.bottom >= y) {
-        selectedAppointmentView = appointmentView;
-        break;
-      }
-    }
+    // SF-15 (Nestify): cascade 模式下取视觉顶层（反向命中），laneFill 模式保持
+    // 前向命中以字节级复刻 SF-6——遍历方向与去重逻辑收敛到 [CascadeLayout.hitTest]。
+    AppointmentView? selectedAppointmentView = CascadeLayout.hitTest(
+      widget.calendar.appointmentOverlapMode,
+      _appointmentCollection,
+      x,
+      y,
+    );
 
     if (selectedAppointmentView == null &&
         widget.view == CalendarView.month &&
@@ -3563,6 +3558,42 @@ class CascadeLayout {
           appointment.endTime,
         ).inDays <=
         0;
+  }
+
+  /// SF-15 (Nestify): 命中测试——返回 rect 包含点 `(x, y)` 的 appointment view，
+  /// 按绘制顺序决定取哪一个。
+  ///
+  /// [views] 是 start-asc 序的渲染集合（后入列 = 后绘制 = 视觉上层）。
+  ///
+  /// - [AppointmentOverlapMode.cascade]：重叠 rect 故意互相压盖（§0.3 overlay），
+  ///   同一点可能落进多个 rect，视觉**顶层 = 最后绘制**，所以必须**反向遍历**
+  ///   （末尾 → 头部），返回第一个命中即顶层。前向遍历会选到被压在下面的最早
+  ///   事件，与"点哪个看哪个"反直觉，并误导长按选中 / 拖拽落点。
+  /// - [AppointmentOverlapMode.laneFill]（默认）：lane 几何下 rect 不重叠，前向
+  ///   与反向命中结果一致，保持**前向**遍历以字节级复刻 SF-6 行为。
+  ///
+  /// 纯函数（不依赖 widget 状态），便于单测；只读 [views]，不产生副作用。
+  static AppointmentView? hitTest(
+    AppointmentOverlapMode mode,
+    List<AppointmentView> views,
+    double x,
+    double y,
+  ) {
+    final bool reverse = mode == AppointmentOverlapMode.cascade;
+    for (int k = 0; k < views.length; k++) {
+      final int i = reverse ? views.length - 1 - k : k;
+      final AppointmentView view = views[i];
+      final RRect? rect = view.appointmentRect;
+      if (view.appointment != null &&
+          rect != null &&
+          rect.left <= x &&
+          rect.right >= x &&
+          rect.top <= y &&
+          rect.bottom >= y) {
+        return view;
+      }
+    }
+    return null;
   }
 
   /// Resolves the per-item cascade box, or `null` when the item should keep the
