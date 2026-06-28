@@ -812,6 +812,13 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
     final double viewStartMinutes =
         (widget.calendar.timeSlotViewSettings.startHour - viewStartHour) * 60;
 
+    // SF-15 (Nestify): precompute the cascade horizontal boxes once per layout
+    // pass. In laneFill mode this returns an empty map immediately, so the loop
+    // below falls through to the byte-identical SF-6 lane path with no overhead.
+    final Map<AppointmentView, CascadeBox> cascadeBoxes = _buildCascadeBoxes(
+      count,
+    );
+
     for (int i = 0; i < _appointmentCollection.length; i++) {
       final AppointmentView appointmentView = _appointmentCollection[i];
       if (appointmentView.canReuse || appointmentView.appointment == null) {
@@ -850,26 +857,56 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
       // maxPositions > 1 时按自身时间段实际占用的相邻 lane 收紧/扩展。
       final double unitWidth =
           (cellWidth - cellEndPadding) / appointmentView.maxPositions;
-      int leftLane = appointmentView.position;
-      int rightLane = appointmentView.position;
-      if (appointmentView.maxPositions > 1) {
-        final List<int> extent = _computeDayAppointmentLaneExtent(
-          appointmentView,
-          appointment,
-        );
-        leftLane = extent[0];
-        rightLane = extent[1];
-      }
-      final int laneSpan = rightLane - leftLane + 1;
-      final double appointmentWidth = laneSpan * unitWidth;
-      if (widget.isRTL) {
-        xPosition =
-            column * cellWidth +
-            ((appointmentView.maxPositions - 1 - rightLane) * unitWidth) +
-            cellEndPadding;
+      final CascadeBox? cascadeBox = cascadeBoxes[appointmentView];
+      late final double appointmentWidth;
+      if (cascadeBox != null) {
+        // SF-15 (Nestify) cascade branch: a single regular rect per
+        // appointment, with its width and x-offset taken from CascadeLayout's
+        // z-batch overlay geometry. Mutually exclusive with SF-6 lane
+        // extension, so it deliberately skips _computeDayAppointmentLaneExtent.
+        final double content = cellWidth - cellEndPadding;
+        double width = cascadeBox.widthFraction * content;
+        // OQ-3 (SF-15): readability floor, tuned on-device in T6. Never widens
+        // past the day-column content, and stays inactive for the §0.3 baseline
+        // whose widths are far above the floor.
+        if (content > CascadeLayout.kCascadeMinReadableWidth &&
+            width < CascadeLayout.kCascadeMinReadableWidth) {
+          width = CascadeLayout.kCascadeMinReadableWidth;
+        }
+        appointmentWidth = width;
+        if (widget.isRTL) {
+          final double mirroredLeft =
+              1 - cascadeBox.leftFraction - cascadeBox.widthFraction;
+          xPosition =
+              column * cellWidth + (mirroredLeft * content) + cellEndPadding;
+        } else {
+          xPosition =
+              column * cellWidth +
+              (cascadeBox.leftFraction * content) +
+              timeLabelWidth;
+        }
       } else {
-        xPosition =
-            column * cellWidth + (leftLane * unitWidth) + timeLabelWidth;
+        int leftLane = appointmentView.position;
+        int rightLane = appointmentView.position;
+        if (appointmentView.maxPositions > 1) {
+          final List<int> extent = _computeDayAppointmentLaneExtent(
+            appointmentView,
+            appointment,
+          );
+          leftLane = extent[0];
+          rightLane = extent[1];
+        }
+        final int laneSpan = rightLane - leftLane + 1;
+        appointmentWidth = laneSpan * unitWidth;
+        if (widget.isRTL) {
+          xPosition =
+              column * cellWidth +
+              ((appointmentView.maxPositions - 1 - rightLane) * unitWidth) +
+              cellEndPadding;
+        } else {
+          xPosition =
+              column * cellWidth + (leftLane * unitWidth) + timeLabelWidth;
+        }
       }
 
       Duration difference = AppointmentHelper.getDifference(
@@ -959,6 +996,65 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
       );
       appointmentView.appointmentRect = rect;
     }
+  }
+
+  /// SF-15 (Nestify): collect the eligible timed day/week/workWeek appointment
+  /// views and resolve their cascade horizontal boxes via [CascadeLayout].
+  ///
+  /// Returns an empty (cheap, unscanned) map unless the calendar opted into
+  /// [AppointmentOverlapMode.cascade]; the laneFill path then stays
+  /// byte-identical to SF-6.
+  Map<AppointmentView, CascadeBox> _buildCascadeBoxes(int count) {
+    if (widget.calendar.appointmentOverlapMode !=
+        AppointmentOverlapMode.cascade) {
+      return const <AppointmentView, CascadeBox>{};
+    }
+
+    final List<AppointmentView> views = <AppointmentView>[];
+    final List<CascadeItem> items = <CascadeItem>[];
+    for (int i = 0; i < _appointmentCollection.length; i++) {
+      final AppointmentView view = _appointmentCollection[i];
+      if (view.canReuse || view.appointment == null) {
+        continue;
+      }
+      final CalendarAppointment appointment = view.appointment!;
+      // Column scan mirrors the main render loop; kept inline (instead of
+      // shared) so the SF-6 fallback path can stay byte-identical.
+      int column = -1;
+      for (int j = 0; j < count; j++) {
+        final DateTime date = widget.visibleDates[j];
+        if (isSameDate(date, appointment.actualStartTime)) {
+          column = widget.isRTL ? count - 1 - j : j;
+          break;
+        }
+      }
+      if (!CascadeLayout.isEligibleTimedAppointment(appointment, column)) {
+        continue;
+      }
+      views.add(view);
+      items.add(
+        CascadeItem(
+          start: appointment.actualStartTime,
+          end: appointment.actualEndTime,
+          position: view.position,
+          maxPositions: view.maxPositions,
+        ),
+      );
+    }
+
+    final List<CascadeBox?> boxes = CascadeLayout.resolve(
+      widget.calendar.appointmentOverlapMode,
+      items,
+    );
+    final Map<AppointmentView, CascadeBox> result =
+        <AppointmentView, CascadeBox>{};
+    for (int i = 0; i < views.length; i++) {
+      final CascadeBox? box = boxes[i];
+      if (box != null) {
+        result[views[i]] = box;
+      }
+    }
+    return result;
   }
 
   /// SF-6 (Nestify): 计算 day/week/workWeek 布局下 [view] 的有效 lane 区间
@@ -3343,4 +3439,354 @@ TextPainter _updateTextPainter(
   textPainter.textWidthBasis = TextWidthBasis.longestLine;
   textPainter.textScaler = TextScaler.linear(textScaleFactor);
   return textPainter;
+}
+
+/// SF-15 (Nestify): immutable input for [CascadeLayout.resolve] describing one
+/// timed day/week/workWeek appointment.
+///
+/// Carries only the geometry-relevant fields so the cascade math stays a pure
+/// function that is unit-testable without a widget tree.
+class CascadeItem {
+  /// Creates a cascade input item.
+  const CascadeItem({
+    required this.start,
+    required this.end,
+    required this.position,
+    required this.maxPositions,
+  });
+
+  /// Actual start time of the appointment.
+  final DateTime start;
+
+  /// Actual end time of the appointment.
+  final DateTime end;
+
+  /// Syncfusion lane index assigned by
+  /// `AppointmentHelper.setAppointmentPositionAndMaxPosition`.
+  final int position;
+
+  /// Syncfusion overlap-cluster column count (shared by every member of the
+  /// same cluster). Drives the cascade activation threshold.
+  final int maxPositions;
+}
+
+/// SF-15 (Nestify): the horizontal placement of one cascade appointment,
+/// expressed as fractions in `[0, 1]` of the day-column content width
+/// (`cellWidth - cellEndPadding`). The consumer maps these to pixels.
+class CascadeBox {
+  /// Creates a cascade box.
+  const CascadeBox({required this.leftFraction, required this.widthFraction});
+
+  /// Left edge as a fraction of the day-column content width.
+  final double leftFraction;
+
+  /// Width as a fraction of the day-column content width.
+  final double widthFraction;
+}
+
+/// SF-15 (Nestify): high-density cascade collision geometry for timed
+/// day/week/workWeek appointments, selected via
+/// [AppointmentOverlapMode.cascade].
+///
+/// ## Why a custom shape (not raw FullCalendar / react-big-calendar)
+///
+/// Both FullCalendar's `timegrid` slot-overlap and react-big-calendar's
+/// `overlap.js` widen the *left-most* event so it overlaps everything to its
+/// right. The Nestify §0.3 target is the opposite: the first event of an
+/// overlap batch stays a clean, narrow, isolated column on the left, while the
+/// *later* batch cascades on top of the deepest existing branch. So this port
+/// keeps react-big-calendar's container / row / leaf **tree** (it captures the
+/// branch structure precisely) but replaces its width/offset math with the
+/// FullCalendar "forward-pressure" idea tuned to §0.3.
+///
+/// ## Algorithm (maps to §0.3)
+///
+/// For the baseline cluster A(8–10,pos0) B(8–10,pos1) C(9–11,pos2)
+/// D(9–9:30,pos3), maxPositions=4:
+///
+/// 1. **Tree** (react-big-calendar): sort by start asc / end desc; the first
+///    event becomes a *container*; a same-start sibling becomes a *row* of that
+///    container; later overlapping events become *leaves* of the most recent
+///    overlapping row. → A = container, B = row of A, C & D = leaves of B. This
+///    yields the §0.3 branch split: A is its own (shallow) branch; B hosts the
+///    C+D overlay stack.
+/// 2. **Widths by branch depth** (forward pressure): `branchDepth` = the
+///    deepest row stack = `1 + max(row.leaves)` (= 3 here). `unit =
+///    width / (branchDepth + 1)` (= 1/4). The container gets a clean `unit`
+///    column on the far left (A → narrow, isolated, no overlap). The row gets
+///    the whole remaining branch region (B → wide).
+/// 3. **Overlay offset** (cascade): each leaf shifts right by
+///    `unit * kCascadeOffsetFactor` and extends to the branch's right edge, so
+///    successive leaves get progressively narrower (C wide, D narrow) and both
+///    overlap the row B underneath — the §0.3 "压盖" overlay.
+///
+/// Result fractions: A `[0, .25]`, B `[.25, .75]`, C `[.5, .5]`, D `[.75, .25]`
+/// — every event is one regular rect; A.width < B.width; D.width < C.width; A
+/// does not intersect B/C/D; C and D both intersect B.
+///
+/// The exact offset step and readability floor have no industry standard and
+/// are tuned on-device against Google Calendar in T6 (OQ-3); only the *shape*
+/// (the invariants above) is fixed here.
+class CascadeLayout {
+  CascadeLayout._();
+
+  /// Minimum overlap-cluster column count (`maxPositions`) required before the
+  /// cascade layout kicks in. Below this, the cluster keeps the SF-6 laneFill
+  /// behavior. SF-15 OQ-3: kept at 4 (the §0.3 baseline) until tuned in T6.
+  static const int kCascadeMinColumns = 4;
+
+  /// Right-shift applied to each cascade leaf, as a multiple of the branch
+  /// `unit` width. `1.0` reproduces the §0.3 baseline (each leaf shifts by one
+  /// full unit). SF-15 OQ-3: tuned on-device in T6 — smaller = tighter overlap
+  /// over the row beneath, larger = more separation.
+  static const double kCascadeOffsetFactor = 1.0;
+
+  /// Minimum readable rect width, in logical pixels, applied by the consumer
+  /// after the fractional box is mapped to pixels. SF-15 OQ-3: a placeholder
+  /// floor tuned on-device in T6; inactive for the §0.3 baseline.
+  static const double kCascadeMinReadableWidth = 24.0;
+
+  /// Mirrors the `_updateDayAppointmentDetails` entry filter: a timed,
+  /// single-day, non-spanned appointment that is visible in [column].
+  ///
+  /// Kept as the single source of truth for cascade eligibility; the render
+  /// loop keeps its own inline `continue` so the SF-6 path stays byte-identical.
+  static bool isEligibleTimedAppointment(
+    CalendarAppointment appointment,
+    int column,
+  ) {
+    if (column == -1 || appointment.isSpanned || appointment.isAllDay) {
+      return false;
+    }
+    return AppointmentHelper.getDifference(
+          appointment.startTime,
+          appointment.endTime,
+        ).inDays <=
+        0;
+  }
+
+  /// Resolves the per-item cascade box, or `null` when the item should keep the
+  /// SF-6 laneFill geometry (non-cascade [mode], or a cluster below
+  /// [kCascadeMinColumns]). The returned list is index-aligned with [items].
+  static List<CascadeBox?> resolve(
+    AppointmentOverlapMode mode,
+    List<CascadeItem> items,
+  ) {
+    final List<CascadeBox?> result = List<CascadeBox?>.filled(
+      items.length,
+      null,
+    );
+    if (mode != AppointmentOverlapMode.cascade || items.isEmpty) {
+      return result;
+    }
+    for (final List<int> cluster in _clusterIndices(items)) {
+      int maxPositions = 1;
+      for (final int idx in cluster) {
+        if (items[idx].maxPositions > maxPositions) {
+          maxPositions = items[idx].maxPositions;
+        }
+      }
+      if (maxPositions < kCascadeMinColumns) {
+        continue;
+      }
+      _assignClusterBoxes(items, cluster, result);
+    }
+    return result;
+  }
+
+  /// Partitions [items] into clusters of transitively overlapping appointments
+  /// (union-find over [_cascadeOverlaps]). O(n²), matching the existing
+  /// `_computeDayAppointmentLaneExtent` scan; n is the per-view appointment
+  /// count, which is small.
+  static List<List<int>> _clusterIndices(List<CascadeItem> items) {
+    final int n = items.length;
+    final List<int> parent = List<int>.generate(n, (int i) => i);
+    int find(int x) {
+      while (parent[x] != x) {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+      }
+      return x;
+    }
+
+    void union(int a, int b) {
+      final int ra = find(a);
+      final int rb = find(b);
+      if (ra != rb) {
+        parent[ra] = rb;
+      }
+    }
+
+    for (int i = 0; i < n; i++) {
+      for (int j = i + 1; j < n; j++) {
+        if (_cascadeOverlaps(
+          items[i].start,
+          items[i].end,
+          items[j].start,
+          items[j].end,
+        )) {
+          union(i, j);
+        }
+      }
+    }
+
+    final Map<int, List<int>> groups = <int, List<int>>{};
+    for (int i = 0; i < n; i++) {
+      groups.putIfAbsent(find(i), () => <int>[]).add(i);
+    }
+    return groups.values.toList();
+  }
+
+  /// Builds the react-big-calendar container / row / leaf forest for one
+  /// cluster and writes each member's [CascadeBox] into [out].
+  static void _assignClusterBoxes(
+    List<CascadeItem> items,
+    List<int> cluster,
+    List<CascadeBox?> out,
+  ) {
+    final List<_CascadeNode> nodes =
+        cluster
+            .map(
+              (int idx) => _CascadeNode(idx, items[idx].start, items[idx].end),
+            )
+            .toList();
+    // start asc, then end desc (longer first), then original index for a
+    // deterministic, stable order on ties.
+    nodes.sort((_CascadeNode a, _CascadeNode b) {
+      final int c = a.start.compareTo(b.start);
+      if (c != 0) {
+        return c;
+      }
+      final int c2 = b.end.compareTo(a.end);
+      if (c2 != 0) {
+        return c2;
+      }
+      return a.index.compareTo(b.index);
+    });
+
+    final List<_CascadeNode> containers = <_CascadeNode>[];
+    for (final _CascadeNode node in nodes) {
+      _CascadeNode? container;
+      for (final _CascadeNode c in containers) {
+        if (_cascadeOverlaps(c.start, c.end, node.start, node.end)) {
+          container = c;
+          break;
+        }
+      }
+      if (container == null) {
+        node.rows = <_CascadeNode>[];
+        containers.add(node);
+        continue;
+      }
+      node.container = container;
+      _CascadeNode? row;
+      for (int j = container.rows!.length - 1; j >= 0; j--) {
+        final _CascadeNode candidate = container.rows![j];
+        if (_cascadeOverlaps(
+          candidate.start,
+          candidate.end,
+          node.start,
+          node.end,
+        )) {
+          row = candidate;
+          break;
+        }
+      }
+      if (row != null) {
+        row.leaves!.add(node);
+        node.row = row;
+      } else {
+        node.leaves = <_CascadeNode>[];
+        container.rows!.add(node);
+      }
+    }
+
+    for (final _CascadeNode c in containers) {
+      _allocateSubtree(c, 0, 1, out);
+    }
+  }
+
+  /// Allocates the horizontal band `[lo, hi]` (fractions) to a container
+  /// subtree: a clean narrow column for the container itself, a wide branch
+  /// region for its rows, and a right-shifted overlay for each row's leaves.
+  static void _allocateSubtree(
+    _CascadeNode container,
+    double lo,
+    double hi,
+    List<CascadeBox?> out,
+  ) {
+    final double w = hi - lo;
+    final List<_CascadeNode> rows = container.rows ?? const <_CascadeNode>[];
+    int branchDepth = 1;
+    for (final _CascadeNode r in rows) {
+      final int depth = 1 + (r.leaves?.length ?? 0);
+      if (depth > branchDepth) {
+        branchDepth = depth;
+      }
+    }
+    final double unit = w / (branchDepth + 1);
+    out[container.index] = CascadeBox(leftFraction: lo, widthFraction: unit);
+
+    final double branchLo = lo + unit;
+    final double step = unit * kCascadeOffsetFactor;
+    // Guard so tuned offset factors (T6) can never collapse a leaf below `unit`
+    // or push it past the branch; inactive at the default factor of 1.0.
+    final double maxLeft = hi - unit;
+    for (final _CascadeNode r in rows) {
+      out[r.index] = CascadeBox(
+        leftFraction: branchLo,
+        widthFraction: hi - branchLo,
+      );
+      final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
+      for (int i = 0; i < leaves.length; i++) {
+        double left = branchLo + (i + 1) * step;
+        if (left > maxLeft) {
+          left = maxLeft;
+        }
+        out[leaves[i].index] = CascadeBox(
+          leftFraction: left,
+          widthFraction: hi - left,
+        );
+      }
+    }
+  }
+
+  /// Time overlap test for cascade clustering. OQ-6: ignores seconds, mirroring
+  /// `CalendarViewHelper.isSameTimeSlot` / Syncfusion's
+  /// `_isIntersectingAppointmentInDayView` — shared start/end slots count as
+  /// overlapping, while back-to-back (`a.end == b.start`) does not.
+  static bool _cascadeOverlaps(
+    DateTime aStart,
+    DateTime aEnd,
+    DateTime bStart,
+    DateTime bEnd,
+  ) {
+    if (CalendarViewHelper.isSameTimeSlot(aStart, bStart) ||
+        CalendarViewHelper.isSameTimeSlot(aEnd, bEnd)) {
+      return true;
+    }
+    final DateTime a0 = _floorToMinute(aStart);
+    final DateTime a1 = _floorToMinute(aEnd);
+    final DateTime b0 = _floorToMinute(bStart);
+    final DateTime b1 = _floorToMinute(bEnd);
+    return a0.isBefore(b1) && b0.isBefore(a1);
+  }
+
+  static DateTime _floorToMinute(DateTime dt) =>
+      DateTime(dt.year, dt.month, dt.day, dt.hour, dt.minute);
+}
+
+/// SF-15 (Nestify): a node in the react-big-calendar container / row / leaf
+/// forest used by [CascadeLayout]. `rows != null` marks a container;
+/// `leaves != null` marks a row base; otherwise the node is a leaf.
+class _CascadeNode {
+  _CascadeNode(this.index, this.start, this.end);
+
+  final int index;
+  final DateTime start;
+  final DateTime end;
+  _CascadeNode? container;
+  _CascadeNode? row;
+  List<_CascadeNode>? rows;
+  List<_CascadeNode>? leaves;
 }
