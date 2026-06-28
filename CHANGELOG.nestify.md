@@ -2,6 +2,20 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.12 — SF-10 schedule current-time boundary ordering
+
+Base: upstream `33.2.8`
+
+- SF-10 (refine, #2227): today's Schedule(list) rows now apply a
+  current-time boundary after the normal SF-11 agenda order, keeping finished
+  timed rows above ongoing/future timed rows while leaving all-day and
+  continuation-spanned banner rows above the timed boundary. This fixes the
+  equal-start case where a 1-6 ongoing row could keep a 1-2 finished row below
+  the red now line. Hit testing, painting, and SF-14 scroll-offset caching use
+  the same boundary. Unit coverage added in
+  `test/sf10_current_time_indicator_test.dart` and
+  `test/sf11_agenda_sort_test.dart`.
+
 ## v33.2.8+nestify.10 — SF-14 schedule current-time scroll API
 
 Base: upstream `33.2.8`

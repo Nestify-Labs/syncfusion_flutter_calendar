@@ -208,11 +208,21 @@ class _AgendaViewLayoutState extends State<AgendaViewLayout> {
 
     final bool isLargerScheduleUI =
         widget.scheduleViewSettings != null && !useMobilePlatformUI;
+    final DateTime now = DateTime.now();
+    // SF-10: today Schedule rows must straddle the now line by completion
+    // state; month agenda and non-today rows keep the normal SF-11 order.
+    final DateTime? currentTimeBoundary =
+        widget.scheduleViewSettings != null &&
+                widget.calendar.showCurrentTimeIndicator &&
+                isSameDate(widget.selectedDate, now)
+            ? now
+            : null;
 
     // SF-11: shared agenda day ordering (all-day first when enabled).
     AppointmentHelper.sortAgendaAppointments(
       widget.appointments!,
       allDayFirst: widget.calendar.agendaSortAllDayAppointmentsFirst,
+      currentTimeBoundary: currentTimeBoundary,
     );
     final double agendaItemHeight =
         CalendarViewHelper.getScheduleAppointmentHeight(
@@ -1701,6 +1711,7 @@ double? scheduleCurrentTimeIndicatorYForAppointments(
   AppointmentHelper.sortAgendaAppointments(
     sortedAppointments,
     allDayFirst: allDayFirst,
+    currentTimeBoundary: now,
   );
 
   const double padding = 5;

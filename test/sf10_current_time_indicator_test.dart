@@ -84,6 +84,26 @@ void main() {
       expect(scheduleCurrentTimeIndicatorY(views, _at(9)), 75);
     });
 
+    test('equal-start ended event stays above the ongoing row boundary', () {
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appointment(start: _at(1), end: _at(6)),
+        _appointment(start: _at(1), end: _at(2)),
+        _appointment(start: _at(6, 30), end: _at(7)),
+      ];
+
+      expect(
+        scheduleCurrentTimeIndicatorYForAppointments(
+          appointments,
+          _at(3, 59),
+          agendaItemHeight: 70,
+          agendaAllDayItemHeight: 50,
+          isLargerScheduleUI: true,
+          allDayFirst: true,
+        ),
+        80,
+      );
+    });
+
     test('all timed events ended -> line below the last event', () {
       final List<AppointmentView> views = <AppointmentView>[
         _view(start: _at(6), end: _at(7), top: 0, bottom: 70),

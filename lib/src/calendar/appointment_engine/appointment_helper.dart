@@ -834,27 +834,34 @@ class AppointmentHelper {
   /// Day-relative rendering ("Ends X" on the last day, banner on middle
   /// days) is a presentation concern and intentionally does NOT influence
   /// this order. `false` reproduces the upstream sort sequence
-  /// byte-identically.
+  /// byte-identically. [currentTimeBoundary] is only supplied by today's
+  /// Schedule rows with the SF-10 now line enabled; after the normal order, it
+  /// stably moves finished timed rows above ongoing/future timed rows so the
+  /// visual list and current-time separator share one semantic boundary.
   static void sortAgendaAppointments(
     List<CalendarAppointment> appointments, {
     required bool allDayFirst,
+    DateTime? currentTimeBoundary,
   }) {
     if (allDayFirst) {
       _sortChronologicalAllDayFirst(appointments);
-      return;
+    } else {
+      appointments.sort(
+        (CalendarAppointment app1, CalendarAppointment app2) =>
+            app1.actualStartTime.compareTo(app2.actualStartTime),
+      );
+      _sortByBoolKeyAscending(
+        appointments,
+        (CalendarAppointment app) => app.isAllDay,
+      );
+      _sortByBoolKeyAscending(
+        appointments,
+        (CalendarAppointment app) => app.isSpanned,
+      );
     }
-    appointments.sort(
-      (CalendarAppointment app1, CalendarAppointment app2) =>
-          app1.actualStartTime.compareTo(app2.actualStartTime),
-    );
-    _sortByBoolKeyAscending(
-      appointments,
-      (CalendarAppointment app) => app.isAllDay,
-    );
-    _sortByBoolKeyAscending(
-      appointments,
-      (CalendarAppointment app) => app.isSpanned,
-    );
+    if (currentTimeBoundary != null) {
+      _sortAgendaCurrentTimeBoundary(appointments, currentTimeBoundary);
+    }
   }
 
   /// [SF-11] Nestify patch: single-pass total-order comparator backing
@@ -864,8 +871,10 @@ class AppointmentHelper {
   static void _sortChronologicalAllDayFirst(
     List<CalendarAppointment> appointments,
   ) {
-    final List<int> order =
-        List<int>.generate(appointments.length, (int i) => i);
+    final List<int> order = List<int>.generate(
+      appointments.length,
+      (int i) => i,
+    );
     order.sort((int i, int j) {
       final int byKeys = _compareChronologicalAllDayFirst(
         appointments[i],
@@ -896,13 +905,61 @@ class AppointmentHelper {
     if (byStart != 0) {
       return byStart;
     }
-    final int byAllDay =
-        orderAppointmentsAscending(app1.isAllDay, app2.isAllDay);
+    final int byAllDay = orderAppointmentsAscending(
+      app1.isAllDay,
+      app2.isAllDay,
+    );
     if (byAllDay != 0) {
       return byAllDay;
     }
     // Longer span first: at an equal start instant compare ends descending.
     return app2.actualEndTime.compareTo(app1.actualEndTime);
+  }
+
+  /// [SF-10] Nestify patch: after the normal agenda ordering, keep today's
+  /// finished timed rows above the Schedule current-time line and the
+  /// ongoing/future timed rows below it. Banner rows stay ahead of the timed
+  /// boundary because SF-10 never anchors the line to all-day or continuation
+  /// spanned rows.
+  static void _sortAgendaCurrentTimeBoundary(
+    List<CalendarAppointment> appointments,
+    DateTime now,
+  ) {
+    final List<int> order = List<int>.generate(
+      appointments.length,
+      (int i) => i,
+    );
+    order.sort((int i, int j) {
+      final int byBucket = _agendaCurrentTimeBucket(
+        appointments[i],
+        now,
+      ).compareTo(_agendaCurrentTimeBucket(appointments[j], now));
+      if (byBucket != 0) {
+        return byBucket;
+      }
+      return i.compareTo(j);
+    });
+    final List<CalendarAppointment> sorted = <CalendarAppointment>[
+      for (final int index in order) appointments[index],
+    ];
+    appointments
+      ..clear()
+      ..addAll(sorted);
+  }
+
+  static int _agendaCurrentTimeBucket(
+    CalendarAppointment appointment,
+    DateTime now,
+  ) {
+    final bool isSpanned =
+        appointment.actualEndTime.day != appointment.actualStartTime.day ||
+        appointment.isSpanned;
+    final bool isStartDay = isSameDate(appointment.actualStartTime, now);
+    final bool isBanner = appointment.isAllDay || (isSpanned && !isStartDay);
+    if (isBanner) {
+      return 0;
+    }
+    return appointment.actualEndTime.isAfter(now) ? 2 : 1;
   }
 
   /// [SF-12] Nestify patch: chronological ordering for the day/week/workWeek
@@ -914,8 +971,10 @@ class AppointmentHelper {
   static void sortAllDayPanelChronologically(
     List<AppointmentView> appointmentViews,
   ) {
-    final List<int> order =
-        List<int>.generate(appointmentViews.length, (int i) => i);
+    final List<int> order = List<int>.generate(
+      appointmentViews.length,
+      (int i) => i,
+    );
     order.sort((int i, int j) {
       final CalendarAppointment? app1 = appointmentViews[i].appointment;
       final CalendarAppointment? app2 = appointmentViews[j].appointment;

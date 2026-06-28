@@ -3964,10 +3964,16 @@ class _SfCalendarState extends State<SfCalendar>
                   panelHeight +
                   appointmentViewPadding +
                   dividerHeight) {
+        final DateTime now = DateTime.now();
         // SF-11: shared agenda day ordering (all-day first when enabled).
         AppointmentHelper.sortAgendaAppointments(
           currentAppointments,
           allDayFirst: widget.agendaSortAllDayAppointmentsFirst,
+          // SF-10: match today's visual Schedule order around the now line.
+          currentTimeBoundary:
+              widget.showCurrentTimeIndicator && isSameDate(currentDate, now)
+                  ? now
+                  : null,
         );
 
         if ((!_isRTL && viewPadding >= position.dx) ||
@@ -4305,7 +4311,8 @@ class _SfCalendarState extends State<SfCalendar>
     }
 
     final double clampedFraction = fraction.clamp(0.0, 1.0);
-    final double rawTarget = indicatorOffset - (viewportHeight * clampedFraction);
+    final double rawTarget =
+        indicatorOffset - (viewportHeight * clampedFraction);
     final double target = rawTarget.clamp(
       position.minScrollExtent,
       position.maxScrollExtent,
@@ -6896,14 +6903,19 @@ class _SfCalendarState extends State<SfCalendar>
               : -(previousHeight + height - interSectPoint);
 
       interSectPoint += appointmentViewPadding;
+      final DateTime now = DateTime.now();
       // SF-11: shared agenda day ordering (all-day first when enabled).
       AppointmentHelper.sortAgendaAppointments(
         currentAppointments,
         allDayFirst: widget.agendaSortAllDayAppointmentsFirst,
+        // SF-10: match today's visual Schedule order around the now line.
+        currentTimeBoundary:
+            widget.showCurrentTimeIndicator && isSameDate(currentDate, now)
+                ? now
+                : null,
       );
       // [SF-14] Cache the same red-line offset the Schedule painter will use,
       // but expressed in the bidirectional CustomScrollView's content space.
-      final DateTime now = DateTime.now();
       if (widget.showCurrentTimeIndicator && isSameDate(currentDate, now)) {
         final double? indicatorY = scheduleCurrentTimeIndicatorYForAppointments(
           currentAppointments,

@@ -54,33 +54,32 @@ void main() {
         _appt('a', start: _day, end: _day, isAllDay: true),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
       expect(_subjects(appointments), <String>['a', 'cd']);
     });
 
-    test('allDayFirst=false reproduces upstream order (spanned above all-day)',
-        () {
-      final List<CalendarAppointment> appointments = <CalendarAppointment>[
-        _appt('a', start: _day, end: _day, isAllDay: true),
-        _appt(
-          'cd',
-          start: _day.add(const Duration(hours: 7)),
-          end: _day.add(const Duration(hours: 31)),
-          isSpanned: true,
-        ),
-      ];
+    test(
+      'allDayFirst=false reproduces upstream order (spanned above all-day)',
+      () {
+        final List<CalendarAppointment> appointments = <CalendarAppointment>[
+          _appt('a', start: _day, end: _day, isAllDay: true),
+          _appt(
+            'cd',
+            start: _day.add(const Duration(hours: 7)),
+            end: _day.add(const Duration(hours: 31)),
+            isSpanned: true,
+          ),
+        ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: false,
-      );
+        AppointmentHelper.sortAgendaAppointments(
+          appointments,
+          allDayFirst: false,
+        );
 
-      expect(_subjects(appointments), <String>['cd', 'a']);
-    });
+        expect(_subjects(appointments), <String>['cd', 'a']);
+      },
+    );
 
     test('full order with allDayFirst: chronological by original start; '
         'all-day anchors midnight; longer span first on equal instants', () {
@@ -111,10 +110,7 @@ void main() {
         ),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
       // Chronological: midnight all-day pair (longer span first) -> 6AM
       // timed -> 7AM spanned timed (spanned-ness no longer jumps the queue)
@@ -125,6 +121,40 @@ void main() {
         'timed-6am',
         'spanned-7am',
         'timed-9am',
+      ]);
+    });
+
+    test('currentTimeBoundary keeps ended timed rows above ongoing rows', () {
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appt(
+          'read',
+          start: _day.add(const Duration(hours: 1)),
+          end: _day.add(const Duration(hours: 6)),
+        ),
+        _appt(
+          'movie',
+          start: _day.add(const Duration(hours: 1)),
+          end: _day.add(const Duration(hours: 2)),
+        ),
+        _appt(
+          'wake',
+          start: _day.add(const Duration(hours: 6, minutes: 30)),
+          end: _day.add(const Duration(hours: 7)),
+        ),
+        _appt('allday', start: _day, end: _day, isAllDay: true),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(
+        appointments,
+        allDayFirst: true,
+        currentTimeBoundary: _day.add(const Duration(hours: 3, minutes: 59)),
+      );
+
+      expect(_subjects(appointments), <String>[
+        'allday',
+        'movie',
+        'read',
+        'wake',
       ]);
     });
 
@@ -150,10 +180,7 @@ void main() {
         ),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
       expect(_subjects(appointments), <String>['cd', 'bbb']);
     });
@@ -193,10 +220,7 @@ void main() {
         ),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
       expect(_subjects(appointments), <String>['xyz', 'aaa', '123', 'abc']);
     });
@@ -229,10 +253,7 @@ void main() {
         ),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
       expect(_subjects(appointments), <String>['aaa', '123', 'abc']);
     });
@@ -253,10 +274,7 @@ void main() {
         ),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
       expect(_subjects(appointments), <String>[
         'allday-1',
@@ -280,15 +298,11 @@ void main() {
           ),
       ];
 
-      AppointmentHelper.sortAgendaAppointments(
-        appointments,
-        allDayFirst: true,
-      );
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
 
-      expect(
-        _subjects(appointments),
-        <String>[for (int i = 0; i < 40; i++) 'timed-$i'],
-      );
+      expect(_subjects(appointments), <String>[
+        for (int i = 0; i < 40; i++) 'timed-$i',
+      ]);
     });
   });
 }
