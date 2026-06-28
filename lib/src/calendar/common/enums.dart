@@ -230,6 +230,31 @@ enum ViewNavigationMode {
   none,
 }
 
+/// [SF-15] Nestify patch: controls how timed appointments in the day / week /
+/// workWeek view are arranged when they overlap at high density.
+///
+/// The mode is selected via [SfCalendar.appointmentOverlapMode]. Default
+/// [laneFill] preserves the current SF-6 lane-extension behavior
+/// byte-identically. [cascade] will be implemented in a later patch (SF-15
+/// geometry + hit-test commits) and stacks appointments on a z-axis at
+/// configurable offsets without widening lanes.
+enum AppointmentOverlapMode {
+  /// Current SF-6 lane-extension behavior: each appointment expands
+  /// horizontally to fill adjacent free lanes in its overlap group.
+  ///
+  /// This is the default. Behavior when selected is byte-identical to all
+  /// versions prior to SF-15.
+  laneFill,
+
+  /// High-density z-layer cascade: overlapping appointments are stacked with
+  /// configurable x/y offsets instead of being resized into narrower lanes.
+  ///
+  /// Geometry and hit-test implementation are added in subsequent SF-15
+  /// commits. Selecting this mode before those commits is a no-op — the
+  /// layout falls back to [laneFill] behavior.
+  cascade,
+}
+
 /// Available Appointment types for [Appointment]
 enum AppointmentType {
   /// - AppointmentType.changedOccurrence, this specifies the appointment is

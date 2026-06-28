@@ -231,6 +231,7 @@ class SfCalendar extends StatefulWidget {
     this.agendaSortAllDayAppointmentsFirst = false,
     this.allDayPanelChronologicalSort = false,
     this.onTimelineCoordinatesChanged,
+    this.appointmentOverlapMode = AppointmentOverlapMode.laneFill,
   }) : assert(firstDayOfWeek >= 1 && firstDayOfWeek <= 7),
        assert(headerHeight >= 0),
        assert(viewHeaderHeight >= -1),
@@ -2178,6 +2179,24 @@ class SfCalendar extends StatefulWidget {
   /// reverse mapping such as `globalY → time`).
   final void Function(SfCalendarTimelineCoordinates coords)?
   onTimelineCoordinatesChanged;
+
+  /// [SF-15] Nestify patch: selects the overlap-resolution strategy for timed
+  /// appointments in the day / week / workWeek view.
+  ///
+  /// [AppointmentOverlapMode.laneFill] (default) preserves the current SF-6
+  /// lane-extension behavior byte-identically — appointments expand
+  /// horizontally to fill adjacent free lanes in their overlap group.
+  ///
+  /// [AppointmentOverlapMode.cascade] will stack overlapping appointments on a
+  /// z-axis with configurable x/y offsets at high density. The geometry and
+  /// hit-test implementation are added in subsequent SF-15 commits; selecting
+  /// [cascade] before those commits is a no-op and the layout falls back to
+  /// [laneFill] behavior.
+  ///
+  /// This flag has no effect on timeline views, month view, or schedule view.
+  /// Default [AppointmentOverlapMode.laneFill] preserves upstream behavior
+  /// byte-identically.
+  final AppointmentOverlapMode appointmentOverlapMode;
 
   /// Allows to customize the drag and drop environment.
   ///
