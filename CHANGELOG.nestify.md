@@ -2,6 +2,21 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.13 — SF-11 single-day timed end-ASC tiebreak (#2227)
+
+Base: upstream `33.2.8`
+
+- SF-11 (refine, #2227): in the shared chronological agenda comparator
+  (`_compareChronologicalAllDayFirst`), two **single-day timed** appointments
+  sharing a start instant now order by end time **ascending** (earlier-ending
+  first) instead of descending. dacheng's aa/bb/dd case: dd (8AM–8PM) ranks
+  above bb (8AM–10PM) because it finishes first, extending the SF-10
+  current-time boundary intuition (an earlier-finishing event crosses the now
+  line first). All-day / spanned-banner pairs keep longer-span-first — the only
+  ordering #2031 actually constrains. Unit coverage added in
+  `test/sf11_agenda_sort_test.dart` (#2227 timed end-ASC + an all-day
+  longer-span-first regression guard).
+
 ## v33.2.8+nestify.12 — SF-10 schedule current-time boundary ordering
 
 Base: upstream `33.2.8`

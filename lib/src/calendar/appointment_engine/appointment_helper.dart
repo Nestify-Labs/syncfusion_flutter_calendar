@@ -894,9 +894,17 @@ class AppointmentHelper {
   }
 
   /// [SF-11]/[SF-12] Nestify patch: shared chronological key sequence —
-  /// original start instant ascending, all-day first on equal instants,
-  /// longer span first on equal instant and kind. Returns 0 on a full tie
-  /// so callers can apply their own deterministic tiebreak.
+  /// original start instant ascending, all-day first on equal instants, then
+  /// on equal instant + kind: longer span first for all-day / spanned-banner
+  /// pairs, earlier-ending first for single-day timed pairs (#2227). Returns 0
+  /// on a full tie so callers can apply their own deterministic tiebreak.
+  ///
+  /// #2031 scope: the `longer span first` tiebreak has a #2031/Google basis
+  /// ONLY for equal-instant all-day / spanned-banner pairs (sole assertion:
+  /// sf11_agenda_sort_test `allday-spanned` ranks above `allday`). The
+  /// end-order of two SINGLE-DAY TIMED appointments sharing a start instant is
+  /// NOT constrained by #2031 — #2227 orders that pair end ASC (earlier-ending
+  /// first: dd ends 8PM ranks above bb ends 10PM).
   static int _compareChronologicalAllDayFirst(
     CalendarAppointment app1,
     CalendarAppointment app2,
@@ -912,7 +920,19 @@ class AppointmentHelper {
     if (byAllDay != 0) {
       return byAllDay;
     }
-    // Longer span first: at an equal start instant compare ends descending.
+    // #2227: two single-day timed events sharing a start instant order by end
+    // ASCENDING (earlier-ending first) — the event that finishes first ranks
+    // above (dd ends 8PM ranks above bb ends 10PM), matching the SF-10
+    // current-time boundary intuition that an earlier-finishing event crosses
+    // the now line first. This pair is NOT constrained by #2031 (method doc).
+    if (!app1.isAllDay &&
+        !app2.isAllDay &&
+        !_isSpanned(app1) &&
+        !_isSpanned(app2)) {
+      return app1.actualEndTime.compareTo(app2.actualEndTime);
+    }
+    // Longer span first for all-day / spanned-banner pairs (#2031 basis): at an
+    // equal start instant compare ends descending.
     return app2.actualEndTime.compareTo(app1.actualEndTime);
   }
 

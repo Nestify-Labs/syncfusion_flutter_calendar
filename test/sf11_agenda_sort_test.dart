@@ -11,6 +11,13 @@
 //   that started on an earlier day ranks above today's all-day appointments;
 //   one that started later the same day ranks below them. Day-relative
 //   rendering ("Ends X" / banner) never influences the order.
+//
+// #2031 SCOPE (read before changing the tiebreak): #2031 only governs all-day
+// vs spanned-event placement. The `longer span first` (end desc) tiebreak is
+// asserted ONLY for equal-instant all-day / spanned pairs (the `allday-spanned`
+// > `allday` case in 'full order with allDayFirst'). The end-order of two
+// SINGLE-DAY TIMED events sharing a start instant is NOT pinned by #2031 and is
+// ordered end ASC by #2227 (earlier-ending first; see the '#2227' test below).
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/appointment_engine/appointment_helper.dart';
@@ -115,6 +122,11 @@ void main() {
       // Chronological: midnight all-day pair (longer span first) -> 6AM
       // timed -> 7AM spanned timed (spanned-ness no longer jumps the queue)
       // -> 9AM timed.
+      // NOTE (#2031 scope): the `allday-spanned` > `allday` pair below is the
+      // SOLE assertion of the `longer span first` tiebreak, and it binds only
+      // all-day / spanned pairs at an equal instant. Two single-day timed
+      // events sharing a start instant are ordered end ASC by #2227 (see the
+      // '#2227' test); do not generalize this all-day expectation to timed pairs.
       expect(_subjects(appointments), <String>[
         'allday-spanned',
         'allday',
@@ -303,6 +315,55 @@ void main() {
       expect(_subjects(appointments), <String>[
         for (int i = 0; i < 40; i++) 'timed-$i',
       ]);
+    });
+
+    test('issue #2227: equal-start single-day timed events order by end '
+        'ASC (earlier-ending first)', () {
+      // dacheng's aa/bb/dd case: bb (8AM-10PM) and dd (8AM-8PM) share an 8AM
+      // start instant; dd finishes first so it ranks ABOVE bb. #2031 only pins
+      // longer-span-first for all-day / spanned banner pairs ('full order with
+      // allDayFirst'); single-day timed pairs flip to end ASC here.
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appt(
+          'bb',
+          start: _day.add(const Duration(hours: 8)),
+          end: _day.add(const Duration(hours: 22)),
+        ),
+        _appt(
+          'dd',
+          start: _day.add(const Duration(hours: 8)),
+          end: _day.add(const Duration(hours: 20)),
+        ),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
+
+      expect(_subjects(appointments), <String>['dd', 'bb']);
+    });
+
+    test('issue #2227: end ASC does not disturb all-day longer-span-first '
+        'at the same instant', () {
+      // Regression guard for the #2031 boundary: all-day banner pairs keep
+      // longer-span-first even though single-day timed pairs flipped to ASC.
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appt(
+          'allday-short',
+          start: _day,
+          end: _day.add(const Duration(days: 1)),
+          isAllDay: true,
+        ),
+        _appt(
+          'allday-long',
+          start: _day,
+          end: _day.add(const Duration(days: 3)),
+          isAllDay: true,
+          isSpanned: true,
+        ),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
+
+      expect(_subjects(appointments), <String>['allday-long', 'allday-short']);
     });
   });
 }
