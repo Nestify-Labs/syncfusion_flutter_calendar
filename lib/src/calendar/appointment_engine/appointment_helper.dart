@@ -905,6 +905,14 @@ class AppointmentHelper {
   /// end-order of two SINGLE-DAY TIMED appointments sharing a start instant is
   /// NOT constrained by #2031 — #2227 orders that pair end ASC (earlier-ending
   /// first: dd ends 8PM ranks above bb ends 10PM).
+  ///
+  /// "Single-day" here uses the exclusive-end cross-midnight check
+  /// [_crossesLocalDayBoundary] (Nestify #2272) — NOT [_isSpanned] (crosses a
+  /// day AND lasts >= 24h), which is a layout/banner concern and stays
+  /// untouched. This keeps the fork comparator aligned with the Nestify
+  /// app-side `crossesLocalDayBoundary` (`event_day_span.dart`) so the
+  /// Schedule(list) view and the app's Month->Day list order equal-start
+  /// cross-midnight (<24h) timed pairs identically.
   static int _compareChronologicalAllDayFirst(
     CalendarAppointment app1,
     CalendarAppointment app2,
@@ -925,15 +933,42 @@ class AppointmentHelper {
     // above (dd ends 8PM ranks above bb ends 10PM), matching the SF-10
     // current-time boundary intuition that an earlier-finishing event crosses
     // the now line first. This pair is NOT constrained by #2031 (method doc).
+    // Single-day is judged with the exclusive-end convention (#2272): ending
+    // exactly at the next local midnight is still single-day; any later end
+    // crosses the day boundary and takes the spanned end-DESC branch below.
     if (!app1.isAllDay &&
         !app2.isAllDay &&
-        !_isSpanned(app1) &&
-        !_isSpanned(app2)) {
+        !_crossesLocalDayBoundary(app1) &&
+        !_crossesLocalDayBoundary(app2)) {
       return app1.actualEndTime.compareTo(app2.actualEndTime);
     }
     // Longer span first for all-day / spanned-banner pairs (#2031 basis): at an
     // equal start instant compare ends descending.
     return app2.actualEndTime.compareTo(app1.actualEndTime);
+  }
+
+  /// [SF-11] Nestify patch (#2272): exclusive-end local-day-boundary check
+  /// backing the #2227 timed end-ASC tiebreak in
+  /// [_compareChronologicalAllDayFirst]. An appointment whose end falls
+  /// exactly on the next local midnight still occupies only its start day
+  /// (`end - 1 microsecond` remains on the start's calendar day), so
+  /// 10PM–midnight counts as single-day while 11PM–1:30AM crosses the
+  /// boundary. Mirrors the Nestify app-side `crossesLocalDayBoundary`
+  /// (`event_day_span.dart`). Intentionally different from [_isSpanned]
+  /// (crosses a day AND lasts >= 24h) — that helper feeds 15+ layout/banner
+  /// call sites and must not change.
+  static bool _crossesLocalDayBoundary(CalendarAppointment appointment) {
+    final DateTime start = appointment.actualStartTime;
+    final DateTime end = appointment.actualEndTime;
+    if (!end.isAfter(start)) {
+      return false;
+    }
+    final DateTime lastInclusive = end.subtract(
+      const Duration(microseconds: 1),
+    );
+    return start.year != lastInclusive.year ||
+        start.month != lastInclusive.month ||
+        start.day != lastInclusive.day;
   }
 
   /// [SF-10] Nestify patch: after the normal agenda ordering, keep today's

@@ -341,6 +341,55 @@ void main() {
       expect(_subjects(appointments), <String>['dd', 'bb']);
     });
 
+    test('issue #2227/#2272: equal-start cross-midnight (<24h) timed events '
+        'are spanned under exclusive-end — end DESC (longer first)', () {
+      // Both start 11PM and cross the local midnight while lasting < 24h.
+      // The old `_isSpanned` check (crosses day AND >= 24h) judged this pair
+      // single-day -> end ASC (short first), diverging from the app-side
+      // `crossesLocalDayBoundary` (Month->Day list) which judges it spanned
+      // -> end DESC. #2272 aligns the fork to exclusive-end: longer first.
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appt(
+          'short-0030',
+          start: _day.add(const Duration(hours: 23)),
+          end: _day.add(const Duration(hours: 24, minutes: 30)),
+        ),
+        _appt(
+          'long-0130',
+          start: _day.add(const Duration(hours: 23)),
+          end: _day.add(const Duration(hours: 25, minutes: 30)),
+        ),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
+
+      expect(_subjects(appointments), <String>['long-0130', 'short-0030']);
+    });
+
+    test('issue #2227/#2272: an end exactly on the next local midnight is '
+        'still single-day — end ASC applies', () {
+      // 10PM-midnight occupies only its start day under exclusive-end
+      // (`end - 1 microsecond` is still on the start's calendar day), so it
+      // pairs with 10PM-11PM as two single-day timed events: earlier-ending
+      // first (end ASC), not the spanned end-DESC branch.
+      final List<CalendarAppointment> appointments = <CalendarAppointment>[
+        _appt(
+          'ends-midnight',
+          start: _day.add(const Duration(hours: 22)),
+          end: _day.add(const Duration(hours: 24)),
+        ),
+        _appt(
+          'ends-11pm',
+          start: _day.add(const Duration(hours: 22)),
+          end: _day.add(const Duration(hours: 23)),
+        ),
+      ];
+
+      AppointmentHelper.sortAgendaAppointments(appointments, allDayFirst: true);
+
+      expect(_subjects(appointments), <String>['ends-11pm', 'ends-midnight']);
+    });
+
     test('issue #2227: end ASC does not disturb all-day longer-span-first '
         'at the same instant', () {
       // Regression guard for the #2031 boundary: all-day banner pairs keep
