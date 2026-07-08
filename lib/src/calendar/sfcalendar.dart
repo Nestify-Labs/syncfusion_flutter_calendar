@@ -2837,6 +2837,14 @@ class _SfCalendarState extends State<SfCalendar>
   /// Used to get the scrolled position to update the header value.
   ScrollController? _agendaScrollController, _resourcePanelScrollController;
 
+  /// [SF-16 #2227] Monotonic epoch mixed into every Schedule(list) row key.
+  /// Bumped by [refreshScheduleAppointmentsInPlace] so a data mutation re-keys
+  /// the visible rows — forcing `_getItem` to rebuild fresh `AgendaViewLayout`
+  /// elements (defeats the bidirectional list's row-element reuse that leaves
+  /// stale occurrences after an in-place edit) WITHOUT recreating
+  /// `_agendaScrollController`, so the scroll position is preserved (no jump).
+  int _scheduleContentEpoch = 0;
+
   late ValueNotifier<DateTime?> _agendaSelectedDate,
       _timelineMonthWeekNumberNotifier;
   ValueNotifier<DateTime?> _headerUpdateNotifier = ValueNotifier<DateTime?>(
@@ -4323,6 +4331,33 @@ class _SfCalendarState extends State<SfCalendar>
 
     controller.jumpTo(target);
     return false;
+  }
+
+  // [SF-16 #2227] Re-key the schedule rows to force an in-place render refresh
+  // without touching `_agendaScrollController` (scroll position preserved).
+  @override
+  void refreshScheduleAppointmentsInPlace() {
+    if (!mounted || _view != CalendarView.schedule) {
+      return;
+    }
+    setState(() {
+      _scheduleContentEpoch++;
+    });
+  }
+
+  /// [SF-16 #2227] Wrap a schedule row builder result with an epoch-scoped key
+  /// so [refreshScheduleAppointmentsInPlace] re-keys the row into a fresh
+  /// element (fresh `AgendaViewLayout` render) instead of reusing a stale one.
+  /// [signedIndex] is the value passed to `_getItem` (negative for backward
+  /// rows, non-negative for forward), keeping keys unique across both slivers.
+  Widget? _keyedScheduleRow(Widget? row, int signedIndex) {
+    if (row == null) {
+      return null;
+    }
+    return KeyedSubtree(
+      key: ValueKey<String>('sched_${signedIndex}_e$_scheduleContentEpoch'),
+      child: row,
+    );
   }
   // ─── end SF-14 patch ────────────────────────────────────────────────────
 
@@ -8201,7 +8236,10 @@ class _SfCalendarState extends State<SfCalendar>
 
                       /// Send negative index value to differentiate the
                       /// backward view from forward view.
-                      return _getItem(context, -(index + 1), isRTL);
+                      return _keyedScheduleRow(
+                        _getItem(context, -(index + 1), isRTL),
+                        -(index + 1),
+                      );
                     }),
                   ),
                   SliverList(
@@ -8213,7 +8251,10 @@ class _SfCalendarState extends State<SfCalendar>
                         return null;
                       }
 
-                      return _getItem(context, index, isRTL);
+                      return _keyedScheduleRow(
+                        _getItem(context, index, isRTL),
+                        index,
+                      );
                     }),
                     key: _scheduleViewKey,
                   ),
@@ -9234,7 +9275,10 @@ class _SfCalendarState extends State<SfCalendar>
 
                     /// Send negative index value to differentiate the
                     /// backward view from forward view.
-                    return _getItem(context, -(index + 1), isRTL);
+                    return _keyedScheduleRow(
+                      _getItem(context, -(index + 1), isRTL),
+                      -(index + 1),
+                    );
                   }),
                 ),
                 SliverList(
@@ -9246,7 +9290,10 @@ class _SfCalendarState extends State<SfCalendar>
                       return null;
                     }
 
-                    return _getItem(context, index, isRTL);
+                    return _keyedScheduleRow(
+                      _getItem(context, index, isRTL),
+                      index,
+                    );
                   }),
                   key: _scheduleViewKey,
                 ),
@@ -13476,4 +13523,15 @@ mixin SfCalendarScheduleScrollApi on State<SfCalendar> {
   /// viewport height. Returns `false` when the layout is not ready yet and the
   /// caller should retry after the next frame.
   bool scrollScheduleCurrentTimeToFraction(double fraction);
+
+  /// [SF-16 #2227] Force the Schedule(list) visible rows to rebuild in place so
+  /// a data mutation (e.g. editing one occurrence of a recurring event) drops
+  /// its stale row without recreating the scroll controller.
+  ///
+  /// Preferred over a full SfCalendar key rebuild for schedule: the bidirectional
+  /// list reuses row elements (stale occurrence lingers), yet a key rebuild
+  /// resets `_agendaScrollController` and an absolute-offset restore is unreliable
+  /// across the reset (the accumulated week heights are gone). This re-keys the
+  /// rows only — fresh render, same scroll position. No-op off the schedule view.
+  void refreshScheduleAppointmentsInPlace();
 }
