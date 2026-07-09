@@ -9,8 +9,11 @@
 // §0.3 baseline cluster (founder's hand-measured Google-parity target):
 //   A 8:00–10:00 (pos 0), B 8:00–10:00 (pos 1),
 //   C 9:00–11:00 (pos 2), D 9:00–9:30  (pos 3),  maxPositions = 4
-// Target render: A narrow + isolated on the left; B wide; C/D cascade-overlay
-// on top of B (C wide, D narrow), all offset right and overlapping B.
+// Target render: A narrow + isolated on the left; B wide; C/D are one 叠入
+// batch (same start slot → same z layer) sitting SIDE BY SIDE (C wide, D
+// narrow, no mutual overlap), offset right as a whole and overlapping B.
+// Tuned fractions pixel-measured from a Google Calendar screenshot of this
+// exact cluster (T6): A [0,.25]  B [.25,.75]  C [.35,.40]  D [.75,.25].
 
 import 'dart:ui';
 
@@ -118,12 +121,59 @@ void main() {
       expect(_intersects(c, b), isTrue);
       expect(_intersects(d, b), isTrue);
 
+      // C and D share one 叠入 batch (same 9:00 start slot → same z layer):
+      // side by side, adjacent, never overlapping each other (§0.3 "同一 z
+      // 层内事件并排"; issue found on-device when D got its own calendar
+      // color and visibly painted over C).
+      expect(_intersects(c, d), isFalse);
+      expect(_right(c), closeTo(d.leftFraction, 1e-9));
+
+      // Pinned Google-parity fractions (T6 pixel-measured screenshot of this
+      // exact cluster; offset factor 0.4, trailing batch member = 1 unit).
+      expect(a.leftFraction, closeTo(0.0, 1e-9));
+      expect(a.widthFraction, closeTo(0.25, 1e-9));
+      expect(b.leftFraction, closeTo(0.25, 1e-9));
+      expect(b.widthFraction, closeTo(0.75, 1e-9));
+      expect(c.leftFraction, closeTo(0.35, 1e-9));
+      expect(c.widthFraction, closeTo(0.40, 1e-9));
+      expect(d.leftFraction, closeTo(0.75, 1e-9));
+      expect(d.widthFraction, closeTo(0.25, 1e-9));
+
       // Boxes stay inside the content band [0, 1].
       for (final CascadeBox box in <CascadeBox>[a, b, c, d]) {
         expect(box.leftFraction, greaterThanOrEqualTo(0));
         expect(_right(box), lessThanOrEqualTo(1.0 + 1e-9));
         expect(box.widthFraction, greaterThan(0));
       }
+    });
+
+    test('cascade + staggered leaves: different start slots form successive '
+        'batches that overlay each other', () {
+      // A/B 8–10 (container + row), C 9–10:30, E 9:45–10:15: C and E start in
+      // different slots → two single-member batches. Each extends to the
+      // branch right edge; batch 1 (E) shifts one more step right and paints
+      // over batch 0 (C) — the §0.3 cross-batch "压盖" cascade.
+      final List<CascadeItem> items = <CascadeItem>[
+        _item(_at(8), _at(10), position: 0, maxPositions: 4), // A
+        _item(_at(8), _at(10), position: 1, maxPositions: 4), // B
+        _item(_at(9), _at(10, 30), position: 2, maxPositions: 4), // C
+        _item(_at(9, 45), _at(10, 15), position: 3, maxPositions: 4), // E
+      ];
+
+      final List<CascadeBox?> boxes = CascadeLayout.resolve(
+        AppointmentOverlapMode.cascade,
+        items,
+      );
+
+      final CascadeBox c = boxes[2]!;
+      final CascadeBox e = boxes[3]!;
+
+      // Single-member batches extend to the branch right edge.
+      expect(_right(c), closeTo(1.0, 1e-9));
+      expect(_right(e), closeTo(1.0, 1e-9));
+      // Batch 1 (E) indents one extra step past batch 0 (C) and overlays it.
+      expect(e.leftFraction, greaterThan(c.leftFraction));
+      expect(_intersects(e, c), isTrue);
     });
 
     test('laneFill + §0.3 baseline: no cascade boxes (SF-6 path untouched)', () {

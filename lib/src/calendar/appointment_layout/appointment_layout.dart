@@ -860,15 +860,13 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
         // z-batch overlay geometry. Mutually exclusive with SF-6 lane
         // extension, so it deliberately skips _computeDayAppointmentLaneExtent.
         final double content = cellWidth - cellEndPadding;
-        double width = cascadeBox.widthFraction * content;
-        // OQ-3 (SF-15): readability floor, tuned on-device in T6. Never widens
-        // past the day-column content, and stays inactive for the §0.3 baseline
-        // whose widths are far above the floor.
-        if (content > CascadeLayout.kCascadeMinReadableWidth &&
-            width < CascadeLayout.kCascadeMinReadableWidth) {
-          width = CascadeLayout.kCascadeMinReadableWidth;
-        }
-        appointmentWidth = width;
+        // OQ-3 (SF-15) T6 定案：不做像素级可读性 floor。container 恰为一个
+        // branch unit 宽、同批成员并排相接、row 与每批末位成员顶到日列内容
+        // 右缘，因此任何把宽度抬到天然值之上的 floor 必然破坏形状不变式：
+        // 并排成员互相压盖、或越界渗入下一日列（周视图实测：container 压
+        // row 11.4px、末位 leaf 越列界 8.4px）。窄列保留天然细条宽度——与
+        // Google Calendar 周视图行为一致。
+        appointmentWidth = cascadeBox.widthFraction * content;
         if (widget.isRTL) {
           final double mirroredLeft =
               1 - cascadeBox.leftFraction - cascadeBox.widthFraction;
@@ -3510,18 +3508,27 @@ class CascadeBox {
 ///    width / (branchDepth + 1)` (= 1/4). The container gets a clean `unit`
 ///    column on the far left (A → narrow, isolated, no overlap). The row gets
 ///    the whole remaining branch region (B → wide).
-/// 3. **Overlay offset** (cascade): each leaf shifts right by
-///    `unit * kCascadeOffsetFactor` and extends to the branch's right edge, so
-///    successive leaves get progressively narrower (C wide, D narrow) and both
-///    overlap the row B underneath — the §0.3 "压盖" overlay.
+/// 3. **Overlay batches** (cascade): a row's leaves are grouped into 叠入
+///    batches by start slot (seconds ignored — OQ-6). Batch `j` shifts right
+///    by `(j + 1) × unit × kCascadeOffsetFactor` and overlays everything
+///    beneath (one z layer per batch — §0.3 "按重叠批次分 z 层"). Within a
+///    batch the members sit **side by side** (same z, no mutual overlap):
+///    trailing members take one `unit` each and the first (longest) member
+///    absorbs the rest — C wide, D narrow, tuned in T6 against a
+///    pixel-measured Google Calendar screenshot of this exact cluster.
 ///
-/// Result fractions: A `[0, .25]`, B `[.25, .75]`, C `[.5, .5]`, D `[.75, .25]`
-/// — every event is one regular rect; A.width < B.width; D.width < C.width; A
-/// does not intersect B/C/D; C and D both intersect B.
+/// Result fractions (offset factor 0.4): A `[0, .25]`, B `[.25, .75]`,
+/// C `[.35, .40]`, D `[.75, .25]` — every event is one regular rect;
+/// A.width < B.width; D.width < C.width; A does not intersect B/C/D; C and D
+/// do not intersect each other (same batch, 并排); C and D both intersect B.
 ///
-/// The exact offset step and readability floor have no industry standard and
-/// are tuned on-device against Google Calendar in T6 (OQ-3); only the *shape*
-/// (the invariants above) is fixed here.
+/// The exact offset step has no industry standard and is tuned on-device
+/// against Google Calendar in T6 (OQ-3); only the *shape* (the invariants
+/// above) is fixed here. A pixel readability floor was evaluated in T6 and
+/// rejected: the container is exactly one unit wide, batch members sit flush
+/// against each other, and the row plus each batch's last member end at the
+/// column right edge — so any active floor breaks the shape invariants
+/// (details at the consumer in `_updateDayAppointmentDetails`).
 class CascadeLayout {
   CascadeLayout._();
 
@@ -3530,16 +3537,11 @@ class CascadeLayout {
   /// behavior. SF-15 OQ-3: kept at 4 (the §0.3 baseline) until tuned in T6.
   static const int kCascadeMinColumns = 4;
 
-  /// Right-shift applied to each cascade leaf, as a multiple of the branch
-  /// `unit` width. `1.0` reproduces the §0.3 baseline (each leaf shifts by one
-  /// full unit). SF-15 OQ-3: tuned on-device in T6 — smaller = tighter overlap
-  /// over the row beneath, larger = more separation.
-  static const double kCascadeOffsetFactor = 1.0;
-
-  /// Minimum readable rect width, in logical pixels, applied by the consumer
-  /// after the fractional box is mapped to pixels. SF-15 OQ-3: a placeholder
-  /// floor tuned on-device in T6; inactive for the §0.3 baseline.
-  static const double kCascadeMinReadableWidth = 24.0;
+  /// Right-shift applied to each cascade **batch**, as a multiple of the
+  /// branch `unit` width. T6 定案：对照 Google Calendar 截图逐像素实测,
+  /// §0.3 基线簇的叠入批相对 row 左缘缩进 ≈0.4 unit（4 深簇 = 列宽的 0.10）。
+  /// Smaller = tighter overlap over the row beneath, larger = more separation.
+  static const double kCascadeOffsetFactor = 0.4;
 
   /// Mirrors the `_updateDayAppointmentDetails` entry filter: a timed,
   /// single-day, non-spanned appointment that is visible in [column].
@@ -3760,26 +3762,65 @@ class CascadeLayout {
 
     final double branchLo = lo + unit;
     final double step = unit * kCascadeOffsetFactor;
-    // Guard so tuned offset factors (T6) can never collapse a leaf below `unit`
-    // or push it past the branch; inactive at the default factor of 1.0.
+    // Guard so tuned offset factors (T6) can never collapse a batch below
+    // `unit` or push it past the branch.
     final double maxLeft = hi - unit;
     for (final _CascadeNode r in rows) {
       out[r.index] = CascadeBox(
         leftFraction: branchLo,
         widthFraction: hi - branchLo,
       );
-      final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
-      for (int i = 0; i < leaves.length; i++) {
-        double left = branchLo + (i + 1) * step;
-        if (left > maxLeft) {
-          left = maxLeft;
+      // §0.3「按重叠批次分 z 层」：同 start slot 的 leaves 为一批（同 z 层，
+      // 并排互不压盖）；批 j 相对 row 左缘右移 (j+1)×step，整体压在前层之上。
+      // 批内宽度分配（T6 对照 Google 实测）：尾成员各占 1 unit，首成员（最长
+      // 者，排序 end desc 保证）吸收剩余宽度——C 宽 D 窄。band 容不下
+      // k×unit 的深簇退化为批内等分（细条，与「无可读性 floor」决策一致）。
+      final List<List<_CascadeNode>> batches = _groupLeavesByStartSlot(
+        r.leaves ?? const <_CascadeNode>[],
+      );
+      for (int j = 0; j < batches.length; j++) {
+        double batchLeft = branchLo + (j + 1) * step;
+        if (batchLeft > maxLeft) {
+          batchLeft = maxLeft;
         }
-        out[leaves[i].index] = CascadeBox(
-          leftFraction: left,
-          widthFraction: hi - left,
-        );
+        final List<_CascadeNode> batch = batches[j];
+        final int k = batch.length;
+        final double band = hi - batchLeft;
+        final double memberUnit = band / k < unit ? band / k : unit;
+        final double firstWidth = band - (k - 1) * memberUnit;
+        double x = batchLeft;
+        for (int m = 0; m < k; m++) {
+          final double width = m == 0 ? firstWidth : memberUnit;
+          out[batch[m].index] = CascadeBox(
+            leftFraction: x,
+            widthFraction: width,
+          );
+          x += width;
+        }
       }
     }
+  }
+
+  /// Groups a row's leaves into 叠入批次：consecutive leaves whose starts fall
+  /// in the same time slot（`isSameTimeSlot`，忽略秒——OQ-6）share a batch.
+  /// Leaves arrive sorted (start asc, end desc), so same-slot members are
+  /// adjacent and ordered longest-first within the batch.
+  static List<List<_CascadeNode>> _groupLeavesByStartSlot(
+    List<_CascadeNode> leaves,
+  ) {
+    final List<List<_CascadeNode>> batches = <List<_CascadeNode>>[];
+    for (final _CascadeNode leaf in leaves) {
+      if (batches.isEmpty ||
+          !CalendarViewHelper.isSameTimeSlot(
+            batches.last.first.start,
+            leaf.start,
+          )) {
+        batches.add(<_CascadeNode>[leaf]);
+      } else {
+        batches.last.add(leaf);
+      }
+    }
+    return batches;
   }
 
   /// Time overlap test for cascade clustering. OQ-6: ignores seconds, mirroring
