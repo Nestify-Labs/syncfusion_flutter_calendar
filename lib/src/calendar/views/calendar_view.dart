@@ -212,8 +212,13 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   // holds the index of the current displaying view
   int _currentChildIndex = 1;
 
-  // _scrollStartPosition contains the touch movement starting position
-  late double _scrollStartPosition;
+  // _scrollStartPosition contains the touch movement starting position.
+  // SF-17: nullable instead of `late` — when viewNavigationMode flips from
+  // none to snap while a drag is in flight, the start handler skipped the
+  // assignment and the update handler would read an uninitialized `late`
+  // field (production LateInitializationError). Null means "no start
+  // recorded"; the update handlers seed it from the current pointer position.
+  double? _scrollStartPosition;
 
   // _position contains distance that the view swiped
   double _position = 0;
@@ -5858,8 +5863,14 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
         if (widget.calendar.monthViewSettings.navigationDirection ==
                 MonthNavigationDirection.horizontal ||
             widget.view != CalendarView.month) {
+          // SF-17: the start handler may have run while viewNavigationMode
+          // was none (no start recorded). Seed the start position from the
+          // current pointer so this tick yields difference == 0 instead of
+          // crashing; subsequent ticks accumulate normally.
+          final double scrollStartPosition =
+              _scrollStartPosition ??= dragUpdateDetails.globalPosition.dx;
           final double difference =
-              dragUpdateDetails.globalPosition.dx - _scrollStartPosition;
+              dragUpdateDetails.globalPosition.dx - scrollStartPosition;
           if (difference < 0 &&
               !DateTimeHelper.canMoveToNextView(
                 widget.view,
@@ -5905,6 +5916,10 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     double weekNumberPanelWidth = 0,
     bool isNeedDragAndDrop = false,
   ]) {
+    // SF-17: drag is over — drop the recorded start so a future drag whose
+    // start handler is skipped seeds from its own pointer instead of reusing
+    // this drag's stale position. Read only by the update handlers.
+    _scrollStartPosition = null;
     if (_dragDetails.value.appointmentView != null &&
         !widget.isMobilePlatform &&
         isNeedDragAndDrop) {
@@ -6136,8 +6151,11 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
         if (widget.calendar.monthViewSettings.navigationDirection ==
                 MonthNavigationDirection.vertical &&
             !CalendarViewHelper.isTimelineView(widget.view)) {
+          // SF-17: same skipped-start seeding as _onHorizontalUpdate.
+          final double scrollStartPosition =
+              _scrollStartPosition ??= dragUpdateDetails.globalPosition.dy;
           final double difference =
-              dragUpdateDetails.globalPosition.dy - _scrollStartPosition;
+              dragUpdateDetails.globalPosition.dy - scrollStartPosition;
           if (difference < 0 &&
               !DateTimeHelper.canMoveToNextView(
                 widget.view,
@@ -6180,6 +6198,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     double weekNumberPanelWidth = 0,
     bool isNeedDragAndDrop = false,
   ]) {
+    // SF-17: see _onHorizontalEnd.
+    _scrollStartPosition = null;
     if (_dragDetails.value.appointmentView != null &&
         !widget.isMobilePlatform &&
         isNeedDragAndDrop) {

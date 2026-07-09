@@ -66,6 +66,8 @@ When Syncfusion ships a new upstream version (e.g. `33.2.8 → 34.0.0`):
 This fork carries:
 
 - `test/sf8_coordinates_test.dart` — pure logic unit tests for SF-8 value-class equality + `yForTime`.
+- `test/sf10_current_time_indicator_test.dart` / `test/sf11_agenda_sort_test.dart` / `test/sf12_allday_panel_sort_test.dart` — agenda/panel ordering + current-time boundary coverage.
+- `test/sf17_navigation_mode_flip_test.dart` — widget tests reproducing the `viewNavigationMode` none→snap mid-drag flip crash (#2345); red on upstream, green with SF-17.
 
 Run:
 

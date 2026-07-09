@@ -2,6 +2,37 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.15 — SF-17 viewNavigationMode mid-drag flip crash fix (#2345)
+
+Base: upstream `33.2.8`
+
+- SF-17 (new, Nestify #2345): `_CustomCalendarScrollViewState._scrollStartPosition`
+  is now nullable instead of `late`. When the host flips `viewNavigationMode`
+  from `none` to `snap` while a view-swipe drag is in flight (Nestify:
+  pinch-zoom navigation lock + 300ms settling-unlock timer), the start handler
+  had skipped the assignment and the update handler crashed with a production
+  fatal `LateInitializationError`. Update handlers now seed a missing start
+  from the current pointer position (that tick computes difference == 0 — no
+  crash, no bogus page turn); end handlers reset the field to null so a stale
+  baseline can never leak into a later skipped-start drag. Regression tests in
+  `test/sf17_navigation_mode_flip_test.dart` (red on upstream for both axes,
+  green with SF-17).
+
+## v33.2.8+nestify.14 — SF-11 timed tie-break day-span alignment (#2272)
+
+Base: upstream `33.2.8`
+
+- (Backfilled entry — tag was published without a changelog heading.)
+- SF-16 (new, #2227): `refreshScheduleAppointmentsInPlace()` re-keys visible
+  Schedule(list) rows via a monotonic content epoch so a host data mutation
+  refreshes stale rows in place without recreating the agenda scroll
+  controller (zero scroll jump). Supersedes the abandoned SF-15 pixel-restore
+  approach.
+- SF-11 (refine, #2272): the comparator's single-day judgment now uses a
+  dedicated exclusive-end day-boundary check (`_crossesLocalDayBoundary`)
+  instead of the ≥24h `_isSpanned` heuristic, aligning the fork comparator
+  with the app/home comparators.
+
 ## v33.2.8+nestify.13 — SF-11 single-day timed end-ASC tiebreak (#2227)
 
 Base: upstream `33.2.8`

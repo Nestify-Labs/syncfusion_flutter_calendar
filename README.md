@@ -10,7 +10,7 @@ consumed by the Nestify mobile app via a `git:` dependency in
 
 | File | Purpose |
 |---|---|
-| [`PATCHES.md`](./PATCHES.md) | Branch / tag model, patch list (SF-1 … SF-7), upgrade procedure, local dev workflow. **Start here for any fork-related work.** |
+| [`PATCHES.md`](./PATCHES.md) | Branch / tag model, patch list (SF-1 … SF-17), upgrade procedure, local dev workflow. **Start here for any fork-related work.** |
 | [`CHANGELOG.nestify.md`](./CHANGELOG.nestify.md) | Nestify-specific release log (per `v<...>+nestify.<n>` tag). |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Upstream Syncfusion changelog (unchanged). |
 | [`UPSTREAM-README.md`](./UPSTREAM-README.md) | Original Syncfusion README. |
