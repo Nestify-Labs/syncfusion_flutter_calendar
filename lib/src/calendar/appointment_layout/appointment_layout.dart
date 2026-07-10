@@ -3508,19 +3508,27 @@ class CascadeBox {
 ///    width / (branchDepth + 1)` (= 1/4). The container gets a clean `unit`
 ///    column on the far left (A → narrow, isolated, no overlap). The row gets
 ///    the whole remaining branch region (B → wide).
-/// 3. **Overlay batches** (cascade): a row's leaves are grouped into 叠入
-///    batches by start slot (seconds ignored — OQ-6). Batch `j` shifts right
-///    by `(j + 1) × unit × kCascadeOffsetFactor` and overlays everything
-///    beneath (one z layer per batch — §0.3 "按重叠批次分 z 层"). Within a
-///    batch the members sit **side by side** (same z, no mutual overlap):
-///    trailing members take one `unit` each and the first (longest) member
-///    absorbs the rest — C wide, D narrow, tuned in T6 against a
-///    pixel-measured Google Calendar screenshot of this exact cluster.
+/// 3. **Overlay layer** (cascade): ALL of a row's leaves form **one** overlay
+///    layer that shifts right by `unit × kCascadeOffsetFactor` from the row's
+///    left edge and overlays the row beneath. §0.3's "按重叠批次分 z 层"
+///    separates the *tree levels* (container/row base layer vs the leaves
+///    overlay), NOT the leaves by start slot: Google renders the 6-deep
+///    cluster (a/b 8–10, c/d 9–11, e/f 9:30–10:30) with c/d/e/f side by side
+///    in one z plane (T6 v2 on-device comparison, #2222), whereas a per-slot
+///    z-cascade buries d entirely beneath f (identical right-edge strips).
+///    Within the layer the members sit **side by side** (no mutual overlap):
+///    trailing members take one `unit` each, the last flush to the column
+///    right edge, and the first (earliest, then longest) member absorbs the
+///    rest — C wide, D narrow, tuned in T6 against a pixel-measured Google
+///    Calendar screenshot of the baseline cluster.
 ///
 /// Result fractions (offset factor 0.4): A `[0, .25]`, B `[.25, .75]`,
 /// C `[.35, .40]`, D `[.75, .25]` — every event is one regular rect;
 /// A.width < B.width; D.width < C.width; A does not intersect B/C/D; C and D
-/// do not intersect each other (same batch, 并排); C and D both intersect B.
+/// do not intersect each other (same layer, 并排); C and D both intersect B.
+/// 6-deep cluster (unit = 1/6): a `[0, 1/6]`, b `[1/6, 5/6]`,
+/// c `[.2333, .2667]`, d `[.5, 1/6]`, e `[2/3, 1/6]`, f `[5/6, 1/6]` —
+/// c/d/e/f pairwise disjoint, each overlaying b (Google parity, #2222).
 ///
 /// The exact offset step has no industry standard and is tuned on-device
 /// against Google Calendar in T6 (OQ-3); only the *shape* (the invariants
@@ -3537,9 +3545,10 @@ class CascadeLayout {
   /// behavior. SF-15 OQ-3: kept at 4 (the §0.3 baseline) until tuned in T6.
   static const int kCascadeMinColumns = 4;
 
-  /// Right-shift applied to each cascade **batch**, as a multiple of the
-  /// branch `unit` width. T6 定案：对照 Google Calendar 截图逐像素实测,
-  /// §0.3 基线簇的叠入批相对 row 左缘缩进 ≈0.4 unit（4 深簇 = 列宽的 0.10）。
+  /// Right-shift applied to the cascade **overlay layer** (a row's leaves),
+  /// as a multiple of the branch `unit` width. T6 定案：对照 Google Calendar
+  /// 截图逐像素实测, §0.3 基线簇的叠入层相对 row 左缘缩进 ≈0.4 unit（4 深簇 =
+  /// 列宽的 0.10）。
   /// Smaller = tighter overlap over the row beneath, larger = more separation.
   static const double kCascadeOffsetFactor = 0.4;
 
@@ -3770,57 +3779,33 @@ class CascadeLayout {
         leftFraction: branchLo,
         widthFraction: hi - branchLo,
       );
-      // §0.3「按重叠批次分 z 层」：同 start slot 的 leaves 为一批（同 z 层，
-      // 并排互不压盖）；批 j 相对 row 左缘右移 (j+1)×step，整体压在前层之上。
-      // 批内宽度分配（T6 对照 Google 实测）：尾成员各占 1 unit，首成员（最长
-      // 者，排序 end desc 保证）吸收剩余宽度——C 宽 D 窄。band 容不下
-      // k×unit 的深簇退化为批内等分（细条，与「无可读性 floor」决策一致）。
-      final List<List<_CascadeNode>> batches = _groupLeavesByStartSlot(
-        r.leaves ?? const <_CascadeNode>[],
-      );
-      for (int j = 0; j < batches.length; j++) {
-        double batchLeft = branchLo + (j + 1) * step;
-        if (batchLeft > maxLeft) {
-          batchLeft = maxLeft;
-        }
-        final List<_CascadeNode> batch = batches[j];
-        final int k = batch.length;
-        final double band = hi - batchLeft;
-        final double memberUnit = band / k < unit ? band / k : unit;
-        final double firstWidth = band - (k - 1) * memberUnit;
-        double x = batchLeft;
-        for (int m = 0; m < k; m++) {
-          final double width = m == 0 ? firstWidth : memberUnit;
-          out[batch[m].index] = CascadeBox(
-            leftFraction: x,
-            widthFraction: width,
-          );
-          x += width;
-        }
+      // §0.3「按重叠批次分 z 层」的分层单位是树层级（row 基层 vs leaves 覆盖
+      // 层），不是 leaves 内部的 start slot：6 深簇 Google 实测（#2222 T6 v2）
+      // 把全部 leaves 放同一 z 平面并排；per-slot z 级联会让后批尾成员整段盖
+      // 住前批尾成员（d 被 f 遮死）。覆盖层相对 row 左缘右移一次 step。
+      // 层内宽度分配（T6 对照 Google 实测）：尾成员各占 1 unit（末位顶到列右
+      // 缘），首成员（最早/最长者，排序 start asc + end desc 保证）吸收剩余
+      // 宽度——C 宽 D 窄。band 容不下 k×unit 的深簇退化为层内等分（细条，
+      // 与「无可读性 floor」决策一致）。
+      final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
+      if (leaves.isEmpty) {
+        continue;
+      }
+      double layerLeft = branchLo + step;
+      if (layerLeft > maxLeft) {
+        layerLeft = maxLeft;
+      }
+      final int k = leaves.length;
+      final double band = hi - layerLeft;
+      final double memberUnit = band / k < unit ? band / k : unit;
+      final double firstWidth = band - (k - 1) * memberUnit;
+      double x = layerLeft;
+      for (int m = 0; m < k; m++) {
+        final double width = m == 0 ? firstWidth : memberUnit;
+        out[leaves[m].index] = CascadeBox(leftFraction: x, widthFraction: width);
+        x += width;
       }
     }
-  }
-
-  /// Groups a row's leaves into 叠入批次：consecutive leaves whose starts fall
-  /// in the same time slot（`isSameTimeSlot`，忽略秒——OQ-6）share a batch.
-  /// Leaves arrive sorted (start asc, end desc), so same-slot members are
-  /// adjacent and ordered longest-first within the batch.
-  static List<List<_CascadeNode>> _groupLeavesByStartSlot(
-    List<_CascadeNode> leaves,
-  ) {
-    final List<List<_CascadeNode>> batches = <List<_CascadeNode>>[];
-    for (final _CascadeNode leaf in leaves) {
-      if (batches.isEmpty ||
-          !CalendarViewHelper.isSameTimeSlot(
-            batches.last.first.start,
-            leaf.start,
-          )) {
-        batches.add(<_CascadeNode>[leaf]);
-      } else {
-        batches.last.add(leaf);
-      }
-    }
-    return batches;
   }
 
   /// Time overlap test for cascade clustering. OQ-6: ignores seconds, mirroring

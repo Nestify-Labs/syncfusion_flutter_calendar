@@ -9,11 +9,16 @@
 // §0.3 baseline cluster (founder's hand-measured Google-parity target):
 //   A 8:00–10:00 (pos 0), B 8:00–10:00 (pos 1),
 //   C 9:00–11:00 (pos 2), D 9:00–9:30  (pos 3),  maxPositions = 4
-// Target render: A narrow + isolated on the left; B wide; C/D are one 叠入
-// batch (same start slot → same z layer) sitting SIDE BY SIDE (C wide, D
-// narrow, no mutual overlap), offset right as a whole and overlapping B.
+// Target render: A narrow + isolated on the left; B wide; C/D form the row's
+// single overlay layer (one z plane) sitting SIDE BY SIDE (C wide, D narrow,
+// no mutual overlap), offset right as a whole and overlapping B.
 // Tuned fractions pixel-measured from a Google Calendar screenshot of this
 // exact cluster (T6): A [0,.25]  B [.25,.75]  C [.35,.40]  D [.75,.25].
+//
+// #2222 deep cluster (T6 v2 Google on-device comparison): ALL of a row's
+// leaves share ONE overlay layer regardless of start slot — a per-slot
+// z-cascade buried d entirely beneath f (identical right-edge strips), while
+// Google renders c/d/e/f side by side: c wide, d/e/f one unit each.
 
 import 'dart:ui';
 
@@ -121,10 +126,10 @@ void main() {
       expect(_intersects(c, b), isTrue);
       expect(_intersects(d, b), isTrue);
 
-      // C and D share one 叠入 batch (same 9:00 start slot → same z layer):
-      // side by side, adjacent, never overlapping each other (§0.3 "同一 z
-      // 层内事件并排"; issue found on-device when D got its own calendar
-      // color and visibly painted over C).
+      // C and D share the row's single overlay layer: side by side, adjacent,
+      // never overlapping each other (§0.3 "同一 z 层内事件并排"; issue found
+      // on-device when D got its own calendar color and visibly painted
+      // over C).
       expect(_intersects(c, d), isFalse);
       expect(_right(c), closeTo(d.leftFraction, 1e-9));
 
@@ -147,12 +152,13 @@ void main() {
       }
     });
 
-    test('cascade + staggered leaves: different start slots form successive '
-        'batches that overlay each other', () {
+    test('cascade + staggered leaves: different start slots still share one '
+        'overlay layer side by side (no per-slot z-cascade)', () {
       // A/B 8–10 (container + row), C 9–10:30, E 9:45–10:15: C and E start in
-      // different slots → two single-member batches. Each extends to the
-      // branch right edge; batch 1 (E) shifts one more step right and paints
-      // over batch 0 (C) — the §0.3 cross-batch "压盖" cascade.
+      // different slots but both are leaves of row B → ONE overlay layer
+      // (#2222 Google parity). C (earliest) absorbs the extra width, E takes
+      // one unit flush to the column right edge; they never overlap each
+      // other. Geometry identical to the same-slot baseline C/D pair.
       final List<CascadeItem> items = <CascadeItem>[
         _item(_at(8), _at(10), position: 0, maxPositions: 4), // A
         _item(_at(8), _at(10), position: 1, maxPositions: 4), // B
@@ -165,15 +171,89 @@ void main() {
         items,
       );
 
+      final CascadeBox b = boxes[1]!;
       final CascadeBox c = boxes[2]!;
       final CascadeBox e = boxes[3]!;
 
-      // Single-member batches extend to the branch right edge.
-      expect(_right(c), closeTo(1.0, 1e-9));
+      // One layer: side by side, adjacent, E flush right, no mutual overlap.
+      expect(_intersects(e, c), isFalse);
+      expect(_right(c), closeTo(e.leftFraction, 1e-9));
       expect(_right(e), closeTo(1.0, 1e-9));
-      // Batch 1 (E) indents one extra step past batch 0 (C) and overlays it.
-      expect(e.leftFraction, greaterThan(c.leftFraction));
-      expect(_intersects(e, c), isTrue);
+      // Both overlay the row beneath.
+      expect(_intersects(c, b), isTrue);
+      expect(_intersects(e, b), isTrue);
+      // Same fractions as the baseline C/D pair (layer left = branchLo + step).
+      expect(c.leftFraction, closeTo(0.35, 1e-9));
+      expect(c.widthFraction, closeTo(0.40, 1e-9));
+      expect(e.leftFraction, closeTo(0.75, 1e-9));
+      expect(e.widthFraction, closeTo(0.25, 1e-9));
+    });
+
+    test('cascade + #2222 deep cluster (6-deep, two start slots): all four '
+        'leaves share one overlay layer — c wide, d/e/f one unit each', () {
+      // deep-a/b 8–10, deep-c/d 9–11, deep-e/f 9:30–10:30 (the dev_tools
+      // "Collision Cases: Seed 23 Events" D+5 cluster). Tree: a = container,
+      // b = row, c/d/e/f = leaves of b. branchDepth = 5 → unit = 1/6.
+      // Google on-device comparison (T6 v2): c/d/e/f side by side in ONE z
+      // plane — d must NOT be buried beneath f.
+      final List<CascadeItem> items = <CascadeItem>[
+        _item(_at(8), _at(10), position: 0, maxPositions: 6), // a
+        _item(_at(8), _at(10), position: 1, maxPositions: 6), // b
+        _item(_at(9), _at(11), position: 2, maxPositions: 6), // c
+        _item(_at(9), _at(11), position: 3, maxPositions: 6), // d
+        _item(_at(9, 30), _at(10, 30), position: 4, maxPositions: 6), // e
+        _item(_at(9, 30), _at(10, 30), position: 5, maxPositions: 6), // f
+      ];
+
+      final List<CascadeBox?> boxes = CascadeLayout.resolve(
+        AppointmentOverlapMode.cascade,
+        items,
+      );
+
+      expect(boxes.every((CascadeBox? b) => b != null), isTrue);
+      final CascadeBox a = boxes[0]!;
+      final CascadeBox b = boxes[1]!;
+      final List<CascadeBox> leaves = <CascadeBox>[
+        boxes[2]!,
+        boxes[3]!,
+        boxes[4]!,
+        boxes[5]!,
+      ];
+
+      // Pinned fractions (unit = 1/6, layer left = 1/6 + 0.4/6 = 7/30).
+      expect(a.leftFraction, closeTo(0.0, 1e-9));
+      expect(a.widthFraction, closeTo(1 / 6, 1e-9));
+      expect(b.leftFraction, closeTo(1 / 6, 1e-9));
+      expect(b.widthFraction, closeTo(5 / 6, 1e-9));
+      expect(leaves[0].leftFraction, closeTo(7 / 30, 1e-9)); // c
+      expect(leaves[0].widthFraction, closeTo(4 / 15, 1e-9));
+      expect(leaves[1].leftFraction, closeTo(0.5, 1e-9)); // d
+      expect(leaves[1].widthFraction, closeTo(1 / 6, 1e-9));
+      expect(leaves[2].leftFraction, closeTo(2 / 3, 1e-9)); // e
+      expect(leaves[2].widthFraction, closeTo(1 / 6, 1e-9));
+      expect(leaves[3].leftFraction, closeTo(5 / 6, 1e-9)); // f
+      expect(leaves[3].widthFraction, closeTo(1 / 6, 1e-9));
+
+      // Shape invariants: leaves pairwise disjoint & adjacent, last flush to
+      // the column right edge, every leaf overlays the row b.
+      for (int i = 0; i < leaves.length; i++) {
+        for (int j = i + 1; j < leaves.length; j++) {
+          expect(
+            _intersects(leaves[i], leaves[j]),
+            isFalse,
+            reason: 'leaf $i and leaf $j must not overlap (one z plane)',
+          );
+        }
+        expect(_intersects(leaves[i], b), isTrue);
+        if (i > 0) {
+          expect(_right(leaves[i - 1]), closeTo(leaves[i].leftFraction, 1e-9));
+        }
+      }
+      expect(_right(leaves[3]), closeTo(1.0, 1e-9));
+      // A keeps its clean isolated left column.
+      for (final CascadeBox leaf in leaves) {
+        expect(_intersects(a, leaf), isFalse);
+      }
     });
 
     test('laneFill + §0.3 baseline: no cascade boxes (SF-6 path untouched)', () {
