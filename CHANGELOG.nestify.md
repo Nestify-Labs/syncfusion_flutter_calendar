@@ -2,6 +2,21 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.16 — SF-18 timed-event cascade collisions (#2222)
+
+Base: upstream `33.2.8`
+
+- SF-18 (new, Nestify #2222): adds `AppointmentOverlapMode` and the opt-in
+  `SfCalendar.appointmentOverlapMode` flag for timed Day / Week / WorkWeek
+  collisions. `laneFill` remains the default and stays byte-identical to the
+  existing SF-6 layout. `cascade` preserves lane-fill for clusters of ≤3
+  concurrent lanes and uses Google-parity container / row / leaf overlay
+  geometry for clusters of ≥4; layered hit testing selects the visually top
+  appointment. Pure-logic coverage: `test/sf18_cascade_layout_test.dart`.
+  Follow-up: hit testing reverses only views that received a cascade box, and
+  cluster resolution uses the same minimum-duration-adjusted end time as the
+  Syncfusion lane allocator.
+
 ## v33.2.8+nestify.15 — SF-17 viewNavigationMode mid-drag flip crash fix (#2345)
 
 Base: upstream `33.2.8`
