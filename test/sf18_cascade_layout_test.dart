@@ -674,4 +674,110 @@ void main() {
       expect(separate.appointmentRect!.width, closeTo(contentWidth - 1, 1e-6));
     },
   );
+
+  testWidgets(
+    'SF-18 appointmentBuilder tap hits the later-painted cascade child',
+    (WidgetTester tester) async {
+      final List<String> tappedSubjects = <String>[];
+      final List<Appointment> source = <Appointment>[
+        Appointment(
+          startTime: _at(11),
+          endTime: _at(17),
+          subject: 'market',
+        ),
+        Appointment(
+          startTime: _at(12),
+          endTime: _at(16),
+          subject: 'BBQ',
+        ),
+        Appointment(
+          startTime: _at(14),
+          endTime: _at(16, 30),
+          subject: 'city',
+        ),
+        Appointment(
+          startTime: _at(14),
+          endTime: _at(17),
+          subject: 'philosophy',
+        ),
+        Appointment(
+          startTime: _at(14),
+          endTime: _at(16, 30),
+          subject: 'museum',
+        ),
+        Appointment(
+          startTime: _at(14, 30),
+          endTime: _at(16, 30),
+          subject: 'art',
+        ),
+        Appointment(
+          startTime: _at(15),
+          endTime: _at(17),
+          subject: 'film',
+        ),
+      ];
+      final SfCalendar calendar = SfCalendar(
+        initialDisplayDate: _day,
+        dataSource: _AppointmentDataSource(source),
+        appointmentOverlapMode: AppointmentOverlapMode.cascade,
+        timeSlotViewSettings: const TimeSlotViewSettings(
+          startHour: 11,
+          endHour: 18,
+        ),
+        appointmentBuilder: (
+          BuildContext context,
+          CalendarAppointmentDetails details,
+        ) {
+          final Appointment appointment =
+              details.appointments.single as Appointment;
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => tappedSubjects.add(appointment.subject),
+            child: const ColoredBox(color: Colors.lightBlue),
+          );
+        },
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(home: SizedBox(width: 800, height: 800, child: calendar)),
+      );
+      await tester.pumpAndSettle();
+
+      final AppointmentLayout layout = tester
+          .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+          .firstWhere(
+            (AppointmentLayout candidate) =>
+                candidate.view == CalendarView.day &&
+                candidate.visibleDates.any(
+                  (DateTime date) =>
+                      date.year == _day.year &&
+                      date.month == _day.month &&
+                      date.day == _day.day,
+                ),
+          );
+      final List<AppointmentView> views =
+          layout.getAppointmentViewCollection();
+      final AppointmentView bbq = views.firstWhere(
+        (AppointmentView view) => view.appointment?.subject == 'BBQ',
+      );
+      final AppointmentView city = views.firstWhere(
+        (AppointmentView view) => view.appointment?.subject == 'city',
+      );
+      final Offset cityCenter = city.appointmentRect!.outerRect.center;
+      expect(
+        bbq.appointmentRect!.outerRect.contains(cityCenter),
+        isTrue,
+        reason: 'the device regression requires city to visibly overlay BBQ',
+      );
+
+      final Finder layoutFinder = find.byWidgetPredicate(
+        (Widget candidate) => identical(candidate, layout),
+      );
+      final RenderBox layoutBox = tester.renderObject<RenderBox>(layoutFinder);
+      await tester.tapAt(layoutBox.localToGlobal(cityCenter));
+      await tester.pump();
+
+      expect(tappedSubjects, <String>['city']);
+    },
+  );
 }

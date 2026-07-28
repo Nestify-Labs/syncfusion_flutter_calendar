@@ -2,6 +2,19 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.17 — SF-18 appointmentBuilder hit-test parity (#2222)
+
+Base: upstream `33.2.8`
+
+- SF-18 (refine, Nestify #2222): custom `appointmentBuilder` children in an
+  active cascade are now hit-tested in reverse paint order. Previously the
+  appointment render object painted those children from bottom to top but
+  tested them from bottom to top as well, so a wide lower card (for example,
+  BBQ) intercepted taps intended for a visually higher leaf. Only views with a
+  real `CascadeBox` use the reversed order; `laneFill` and non-cascade fallback
+  children keep the upstream forward hit-test order. Widget regression
+  coverage is included in `test/sf18_cascade_layout_test.dart`.
+
 ## v33.2.8+nestify.16 — SF-18 timed-event cascade collisions (#2222)
 
 Base: upstream `33.2.8`

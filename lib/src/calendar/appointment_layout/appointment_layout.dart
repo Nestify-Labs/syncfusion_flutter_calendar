@@ -412,6 +412,7 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
       widget.height,
       widget.localizations,
       _appointmentCollection,
+      _activeCascadeViews,
       _indexAppointments,
       _monthAppointmentCountViews,
       _weekNumberPanelWidth,
@@ -1575,6 +1576,7 @@ class _AppointmentRenderWidget extends MultiChildRenderObjectWidget {
     this.height,
     this.localizations,
     this.appointmentCollection,
+    this.activeCascadeViews,
     this.indexAppointments,
     this.monthAppointmentCountViews,
     this.weekNumberPanelWidth, {
@@ -1599,6 +1601,7 @@ class _AppointmentRenderWidget extends MultiChildRenderObjectWidget {
   final SfLocalizations localizations;
   final List<CalendarAppointment>? visibleAppointments;
   final List<AppointmentView> appointmentCollection;
+  final Set<AppointmentView> activeCascadeViews;
   final Map<int, List<AppointmentView>> indexAppointments;
   final Map<int, RRect> monthAppointmentCountViews;
 
@@ -1622,6 +1625,7 @@ class _AppointmentRenderWidget extends MultiChildRenderObjectWidget {
       height,
       localizations,
       appointmentCollection,
+      activeCascadeViews,
       indexAppointments,
       monthAppointmentCountViews,
       weekNumberPanelWidth,
@@ -1651,6 +1655,7 @@ class _AppointmentRenderWidget extends MultiChildRenderObjectWidget {
       ..height = height
       ..localizations = localizations
       ..appointmentCollection = appointmentCollection
+      ..activeCascadeViews = activeCascadeViews
       ..indexAppointments = indexAppointments
       ..monthAppointmentCountViews = monthAppointmentCountViews
       ..weekNumberPanelWidth = weekNumberPanelWidth;
@@ -1676,6 +1681,7 @@ class _AppointmentRenderObject extends CustomCalendarRenderObject {
     this._height,
     this._localizations,
     this.appointmentCollection,
+    this.activeCascadeViews,
     this.indexAppointments,
     this.monthAppointmentCountViews,
     this._weekNumberPanelWidth,
@@ -1926,6 +1932,7 @@ class _AppointmentRenderObject extends CustomCalendarRenderObject {
 
   bool isMobilePlatform;
   List<AppointmentView> appointmentCollection = <AppointmentView>[];
+  Set<AppointmentView> activeCascadeViews = const <AppointmentView>{};
   Map<int, List<AppointmentView>> indexAppointments =
       <int, List<AppointmentView>>{};
   Map<int, RRect> monthAppointmentCountViews = <int, RRect>{};
@@ -2025,30 +2032,73 @@ class _AppointmentRenderObject extends CustomCalendarRenderObject {
       return false;
     }
 
-    for (int i = 0; i < appointmentCollection.length; i++) {
-      final AppointmentView appointmentView = appointmentCollection[i];
-      if (appointmentView.appointment == null ||
-          child == null ||
-          appointmentView.appointmentRect == null) {
-        continue;
+    // SF-18 (Nestify): custom appointmentBuilder children paint in collection
+    // order, so cascade children must hit-test in the reverse order. Without
+    // this branch a bottom child GestureDetector (for example the wide row
+    // beneath a later-painted leaf) wins before Calendar's point resolver can
+    // apply CascadeLayout.hitTest. Keep laneFill and cascade fallback children
+    // on the original forward-first path.
+    if (calendar.appointmentOverlapMode == AppointmentOverlapMode.cascade &&
+        activeCascadeViews.isNotEmpty) {
+      final List<AppointmentView> views = <AppointmentView>[];
+      final List<RenderBox> children = <RenderBox>[];
+      for (int i = 0; i < appointmentCollection.length; i++) {
+        final AppointmentView appointmentView = appointmentCollection[i];
+        if (appointmentView.appointment == null ||
+            child == null ||
+            appointmentView.appointmentRect == null) {
+          continue;
+        }
+        views.add(appointmentView);
+        children.add(child);
+        child = childAfter(child);
       }
 
-      final Offset offset = Offset(
-        appointmentView.appointmentRect!.left,
-        appointmentView.appointmentRect!.top,
-      );
-      final bool isHit = result.addWithPaintOffset(
-        offset: offset,
-        position: position,
-        hitTest: (BoxHitTestResult result, Offset? transformed) {
-          assert(transformed == position - offset);
-          return child!.hitTest(result, position: transformed!);
-        },
-      );
-      if (isHit) {
-        return true;
+      for (int i = views.length - 1; i >= 0; i--) {
+        if (!activeCascadeViews.contains(views[i])) {
+          continue;
+        }
+        if (_hitTestAppointmentChild(
+          result,
+          position,
+          children[i],
+          views[i],
+        )) {
+          return true;
+        }
       }
-      child = childAfter(child);
+      for (int i = 0; i < views.length; i++) {
+        if (activeCascadeViews.contains(views[i])) {
+          continue;
+        }
+        if (_hitTestAppointmentChild(
+          result,
+          position,
+          children[i],
+          views[i],
+        )) {
+          return true;
+        }
+      }
+    } else {
+      for (int i = 0; i < appointmentCollection.length; i++) {
+        final AppointmentView appointmentView = appointmentCollection[i];
+        if (appointmentView.appointment == null ||
+            child == null ||
+            appointmentView.appointmentRect == null) {
+          continue;
+        }
+
+        if (_hitTestAppointmentChild(
+          result,
+          position,
+          child,
+          appointmentView,
+        )) {
+          return true;
+        }
+        child = childAfter(child);
+      }
     }
 
     if (view != CalendarView.month ||
@@ -2080,6 +2130,26 @@ class _AppointmentRenderObject extends CustomCalendarRenderObject {
     }
 
     return false;
+  }
+
+  bool _hitTestAppointmentChild(
+    BoxHitTestResult result,
+    Offset position,
+    RenderBox child,
+    AppointmentView appointmentView,
+  ) {
+    final Offset offset = Offset(
+      appointmentView.appointmentRect!.left,
+      appointmentView.appointmentRect!.top,
+    );
+    return result.addWithPaintOffset(
+      offset: offset,
+      position: position,
+      hitTest: (BoxHitTestResult result, Offset? transformed) {
+        assert(transformed == position - offset);
+        return child.hitTest(result, position: transformed!);
+      },
+    );
   }
 
   @override
