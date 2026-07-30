@@ -2,6 +2,17 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.18 — SF-19 lifecycle-safe appointment refresh (#2278)
+
+Base: upstream `33.2.8`
+
+- SF-19 (new, Nestify #2278): appointment-collection refreshes queued for the
+  end of a frame now verify that their `SfCalendar` State is still mounted
+  before calling `setState`. Replacing a calendar after a Schedule data update
+  no longer lets the disposed State raise `setState() called after dispose`.
+  Schedule and non-Schedule refreshes share the same guarded helper, with
+  widget regression coverage in `test/sf19_post_frame_dispose_test.dart`.
+
 ## v33.2.8+nestify.17 — SF-18 appointmentBuilder hit-test parity (#2222)
 
 Base: upstream `33.2.8`

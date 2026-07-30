@@ -5374,11 +5374,7 @@ class _SfCalendarState extends State<SfCalendar>
     List<CalendarAppointment> visibleAppointmentCollection,
   ) {
     if (_view == CalendarView.schedule) {
-      SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
-        setState(() {
-          /// Update the view when the appointment collection changed.
-        });
-      });
+      _scheduleVisibleAppointmentCollectionRefresh();
       return;
     }
 
@@ -5394,9 +5390,18 @@ class _SfCalendarState extends State<SfCalendar>
     /// Update all day appointment related implementation in calendar,
     /// because time label view needs the top position.
     _updateAllDayAppointment();
+    _scheduleVisibleAppointmentCollectionRefresh();
+  }
+
+  void _scheduleVisibleAppointmentCollectionRefresh() {
     SchedulerBinding.instance.addPostFrameCallback((Duration timeStamp) {
+      // SF-19: Post-frame callbacks cannot be cancelled. The host may replace
+      // this calendar before the callback runs, so discard stale refreshes.
+      if (!mounted) {
+        return;
+      }
       setState(() {
-        /// Update the UI.
+        /// Update the view when the appointment collection changed.
       });
     });
   }
