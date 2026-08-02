@@ -68,12 +68,13 @@ This fork carries:
 - `test/sf8_coordinates_test.dart` — pure logic unit tests for SF-8 value-class equality + `yForTime`.
 - `test/sf10_current_time_indicator_test.dart` / `test/sf11_agenda_sort_test.dart` / `test/sf12_allday_panel_sort_test.dart` — agenda/panel ordering + current-time boundary coverage.
 - `test/sf17_navigation_mode_flip_test.dart` — widget tests reproducing the `viewNavigationMode` none→snap mid-drag flip crash (#2345); red on upstream, green with SF-17.
+- `test/sf20_appointment_overlap_details_test.dart` — widget coverage proving `appointmentBuilder` receives occurrence-level timed overlap metadata (#2797).
 
 Run:
 
 ```bash
-dart pub get
-dart test
+flutter pub get
+flutter test
 ```
 
 The fork does **not** carry full integration tests — Syncfusion's own example app + screenshots are stripped from `main`. End-to-end behavior verification happens in the Nestify mono-repo against a real device. Manual verification matrix lives in `mobile/packages/calendar/AGENTS.md` and `.feature/v1.*/calendar-*/smoke.md` in the consumer repo.
@@ -90,7 +91,7 @@ The fork does **not** carry full integration tests — Syncfusion's own example 
 
 | File | Purpose |
 |---|---|
-| [`PATCHES.md`](./PATCHES.md) | Canonical patch list (SF-1 … SF-8), upgrade procedure, position-to-time inventory. |
+| [`PATCHES.md`](./PATCHES.md) | Canonical patch list (SF-1 … SF-20), upgrade procedure, position-to-time inventory. |
 | [`CHANGELOG.nestify.md`](./CHANGELOG.nestify.md) | Release log per `v<...>+nestify.<n>` tag. |
 | [`CHANGELOG.md`](./CHANGELOG.md) | Upstream Syncfusion changelog (do not edit). |
 | [`UPSTREAM-README.md`](./UPSTREAM-README.md) | Original Syncfusion README (do not edit). |

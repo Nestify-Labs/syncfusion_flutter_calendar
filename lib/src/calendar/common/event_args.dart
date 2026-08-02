@@ -434,6 +434,8 @@ class CalendarAppointmentDetails {
     this.appointments,
     this.bounds, {
     this.isMoreAppointmentRegion = false,
+    // SF-20: expose the finalized timed-layout overlap state to builders.
+    this.isOverlapping = false,
   });
 
   /// The date value associated with the appointment view widget.
@@ -451,6 +453,13 @@ class CalendarAppointmentDetails {
   /// It is applicable on the day, week, workweek views all day panel and
   /// month cell appointment.
   final bool isMoreAppointmentRegion;
+
+  /// Whether this timed appointment participates in an overlapping layout.
+  ///
+  /// This is `true` only for appointments assigned to a multi-lane collision
+  /// group in day, week, or workweek views. Other views and more-appointment
+  /// regions report `false`.
+  final bool isOverlapping;
 }
 
 /// Contains the details that needed on special region view builder.

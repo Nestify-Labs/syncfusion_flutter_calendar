@@ -251,6 +251,13 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
               appointmentView.appointmentRect!.width,
               appointmentView.appointmentRect!.height,
             ),
+            // SF-20: reuse the finalized lane allocator result instead of
+            // making appointmentBuilder clients reconstruct collisions.
+            isOverlapping:
+                (widget.view == CalendarView.day ||
+                    widget.view == CalendarView.week ||
+                    widget.view == CalendarView.workWeek) &&
+                appointmentView.maxPositions > 1,
           ),
         );
 

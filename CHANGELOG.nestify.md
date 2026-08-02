@@ -2,6 +2,17 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.19 — SF-20 appointment overlap details (#2797)
+
+Base: upstream `33.2.8`
+
+- SF-20 (new, Nestify #2797): `CalendarAppointmentDetails.isOverlapping`
+  now exposes the finalized timed Day / Week / WorkWeek collision-group result
+  to custom appointment builders. Recurring occurrences use their rendered
+  occurrence layout instead of requiring hosts to compare master event times.
+  Other views default to `false`; layout and painting remain unchanged.
+  Widget coverage is in `test/sf20_appointment_overlap_details_test.dart`.
+
 ## v33.2.8+nestify.18 — SF-19 lifecycle-safe appointment refresh (#2278)
 
 Base: upstream `33.2.8`
