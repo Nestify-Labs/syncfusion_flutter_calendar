@@ -3624,9 +3624,9 @@ class CascadeBox {
 ///    C+D overlay stack.
 /// 2. **Widths by branch depth** (forward pressure): `branchDepth` = the
 ///    deepest row stack = `1 + max(row.leaves)` (= 3 here). `unit =
-///    width / (branchDepth + 1)` (= 1/4). The container gets a clean `unit`
-///    column on the far left (A → narrow, isolated, no overlap). The row gets
-///    the whole remaining branch region (B → wide).
+///    width / (branchDepth + 1)` (= 1/4). The container and every row each get
+///    one clean `unit` column (A/B → narrow); leaves own the remaining overlay
+///    region when present.
 /// 3. **Overlay layer** (cascade): ALL of a row's leaves form **one** overlay
 ///    layer that shifts right by `unit × kCascadeOffsetFactor` from the row's
 ///    left edge and overlays the row beneath. §0.3's "按重叠批次分 z 层"
@@ -3641,20 +3641,20 @@ class CascadeBox {
 ///    rest — C wide, D narrow, tuned in T6 against a pixel-measured Google
 ///    Calendar screenshot of the baseline cluster.
 ///
-/// Result fractions (offset factor 0.4): A `[0, .25]`, B `[.25, .75]`,
+/// Result fractions (offset factor 0.4): A `[0, .25]`, B `[.25, .25]`,
 /// C `[.35, .40]`, D `[.75, .25]` — every event is one regular rect;
-/// A.width < B.width; D.width < C.width; A does not intersect B/C/D; C and D
-/// do not intersect each other (same layer, 并排); C and D both intersect B.
-/// 6-deep cluster (unit = 1/6): a `[0, 1/6]`, b `[1/6, 5/6]`,
+/// A.width == B.width; D.width < C.width; A does not intersect B/C/D; C and D
+/// do not intersect each other (same layer, 并排); only C intersects B.
+/// 6-deep cluster (unit = 1/6): a `[0, 1/6]`, b `[1/6, 1/6]`,
 /// c `[.2333, .2667]`, d `[.5, 1/6]`, e `[2/3, 1/6]`, f `[5/6, 1/6]` —
-/// c/d/e/f pairwise disjoint, each overlaying b (Google parity, #2222).
+/// c/d/e/f pairwise disjoint; only c overlaps b (Google parity leaves, #2222).
 ///
 /// The exact offset step has no industry standard and is tuned on-device
 /// against Google Calendar in T6 (OQ-3); only the *shape* (the invariants
 /// above) is fixed here. A pixel readability floor was evaluated in T6 and
 /// rejected: the container is exactly one unit wide, batch members sit flush
-/// against each other, and the row plus each batch's last member end at the
-/// column right edge — so any active floor breaks the shape invariants
+/// against each other, and each batch's last member ends at the column right
+/// edge — so any active floor breaks the shape invariants
 /// (details at the consumer in `_updateDayAppointmentDetails`).
 class CascadeLayout {
   CascadeLayout._();
@@ -3907,11 +3907,14 @@ class CascadeLayout {
     // `unit` or push it past the branch.
     final double maxLeft = hi - unit;
     for (final _CascadeNode r in rows) {
+      final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
       out[r.index] = CascadeBox(
         leftFraction: branchLo,
-        widthFraction: hi - branchLo,
+        // SF-18 (#2859 Stage 3): every Cascade row owns exactly one base lane.
+        // Leaving a row without leaves at the remaining branch width made the
+        // same Cascade cluster follow two different width rules.
+        widthFraction: unit,
       );
-      final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
       if (leaves.isEmpty) {
         continue;
       }

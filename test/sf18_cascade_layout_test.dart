@@ -9,11 +9,12 @@
 // §0.3 baseline cluster (founder's hand-measured Google-parity target):
 //   A 8:00–10:00 (pos 0), B 8:00–10:00 (pos 1),
 //   C 9:00–11:00 (pos 2), D 9:00–9:30  (pos 3),  maxPositions = 4
-// Target render: A narrow + isolated on the left; B wide; C/D form the row's
+// Target render: A/B each keep one needed lane; C/D form the row's
 // single overlay layer (one z plane) sitting SIDE BY SIDE (C wide, D narrow,
 // no mutual overlap), offset right as a whole and overlapping B.
 // Tuned fractions pixel-measured from a Google Calendar screenshot of this
-// exact cluster (T6): A [0,.25]  B [.25,.75]  C [.35,.40]  D [.75,.25].
+// exact cluster after SF-18 Stage 3: A [0,.25]  B [.25,.25]  C [.35,.40]
+// D [.75,.25].
 //
 // #2222 deep cluster (T6 v2 Google on-device comparison): ALL of a row's
 // leaves share ONE overlay layer regardless of start slot — a per-slot
@@ -128,9 +129,9 @@ void main() {
       final CascadeBox c = boxes[2]!;
       final CascadeBox d = boxes[3]!;
 
-      // Width by branch depth: A's branch is shallow (narrow), B hosts the
-      // C+D overlay (wide); within the overlay C is wide, D is narrow.
-      expect(a.widthFraction, lessThan(b.widthFraction));
+      // Stage 3: container A and row B each occupy one needed base lane;
+      // within the overlay C is wide, D is narrow.
+      expect(a.widthFraction, closeTo(b.widthFraction, 1e-9));
       expect(d.widthFraction, lessThan(c.widthFraction));
 
       // A owns the clean left column: its x-interval does not intersect any of
@@ -139,9 +140,10 @@ void main() {
       expect(_intersects(a, c), isFalse);
       expect(_intersects(a, d), isFalse);
 
-      // C and D cascade on top of B (压盖): their x-intervals intersect B's.
+      // The left-most overlay leaf still cascades on top of B. D has no need
+      // to overlap B after the base row is narrowed to its actual lane.
       expect(_intersects(c, b), isTrue);
-      expect(_intersects(d, b), isTrue);
+      expect(_intersects(d, b), isFalse);
 
       // C and D share the row's single overlay layer: side by side, adjacent,
       // never overlapping each other (§0.3 "同一 z 层内事件并排"; issue found
@@ -155,7 +157,7 @@ void main() {
       expect(a.leftFraction, closeTo(0.0, 1e-9));
       expect(a.widthFraction, closeTo(0.25, 1e-9));
       expect(b.leftFraction, closeTo(0.25, 1e-9));
-      expect(b.widthFraction, closeTo(0.75, 1e-9));
+      expect(b.widthFraction, closeTo(0.25, 1e-9));
       expect(c.leftFraction, closeTo(0.35, 1e-9));
       expect(c.widthFraction, closeTo(0.40, 1e-9));
       expect(d.leftFraction, closeTo(0.75, 1e-9));
@@ -196,9 +198,10 @@ void main() {
       expect(_intersects(e, c), isFalse);
       expect(_right(c), closeTo(e.leftFraction, 1e-9));
       expect(_right(e), closeTo(1.0, 1e-9));
-      // Both overlay the row beneath.
+      // Only the left-most leaf reaches the row after its Stage 3 compaction.
       expect(_intersects(c, b), isTrue);
-      expect(_intersects(e, b), isTrue);
+      expect(_intersects(e, b), isFalse);
+      expect(b.widthFraction, closeTo(0.25, 1e-9));
       // Same fractions as the baseline C/D pair (layer left = branchLo + step).
       expect(c.leftFraction, closeTo(0.35, 1e-9));
       expect(c.widthFraction, closeTo(0.40, 1e-9));
@@ -241,7 +244,7 @@ void main() {
       expect(a.leftFraction, closeTo(0.0, 1e-9));
       expect(a.widthFraction, closeTo(1 / 6, 1e-9));
       expect(b.leftFraction, closeTo(1 / 6, 1e-9));
-      expect(b.widthFraction, closeTo(5 / 6, 1e-9));
+      expect(b.widthFraction, closeTo(1 / 6, 1e-9));
       expect(leaves[0].leftFraction, closeTo(7 / 30, 1e-9)); // c
       expect(leaves[0].widthFraction, closeTo(4 / 15, 1e-9));
       expect(leaves[1].leftFraction, closeTo(0.5, 1e-9)); // d
@@ -252,7 +255,7 @@ void main() {
       expect(leaves[3].widthFraction, closeTo(1 / 6, 1e-9));
 
       // Shape invariants: leaves pairwise disjoint & adjacent, last flush to
-      // the column right edge, every leaf overlays the row b.
+      // the column right edge; only the left-most leaf overlaps compact row b.
       for (int i = 0; i < leaves.length; i++) {
         for (int j = i + 1; j < leaves.length; j++) {
           expect(
@@ -261,7 +264,7 @@ void main() {
             reason: 'leaf $i and leaf $j must not overlap (one z plane)',
           );
         }
-        expect(_intersects(leaves[i], b), isTrue);
+        expect(_intersects(leaves[i], b), i == 0);
         if (i > 0) {
           expect(_right(leaves[i - 1]), closeTo(leaves[i].leftFraction, 1e-9));
         }
@@ -274,7 +277,7 @@ void main() {
     });
 
     test('cascade + #2859 recycles the overlay band between disjoint leaf '
-        'components', () {
+        'components and keeps the row to its needed base lane', () {
       // a/b bridge two short-event groups into one overlap cluster. The first
       // group has three concurrent leaves, while f/g start only after c/d/e
       // finish. They must therefore reuse the whole overlay band rather than
@@ -309,7 +312,9 @@ void main() {
       expect(a.leftFraction, closeTo(0, 1e-9));
       expect(a.widthFraction, closeTo(0.20, 1e-9));
       expect(b.leftFraction, closeTo(0.20, 1e-9));
-      expect(b.widthFraction, closeTo(0.80, 1e-9));
+      // Stage 3: the long base event needs one branch lane, not the entire
+      // unused branch remainder. Leaves keep their Stage 1+2 allocation.
+      expect(b.widthFraction, closeTo(0.20, 1e-9));
 
       for (final CascadeBox leaf in <CascadeBox>[
         ...firstComponent,
@@ -377,7 +382,7 @@ void main() {
       // geometry is retained rather than treating this as a recycling case.
       expect(a.widthFraction, closeTo(1 / 7, 1e-9));
       expect(b.leftFraction, closeTo(1 / 7, 1e-9));
-      expect(b.widthFraction, closeTo(6 / 7, 1e-9));
+      expect(b.widthFraction, closeTo(1 / 7, 1e-9));
 
       for (int i = 0; i < leaves.length; i++) {
         for (int j = i + 1; j < leaves.length; j++) {
@@ -408,11 +413,13 @@ void main() {
       );
 
       final CascadeBox a = boxes[0]!;
+      final CascadeBox b = boxes[1]!;
       final CascadeBox c = boxes[2]!;
       final CascadeBox d = boxes[3]!;
       final CascadeBox e = boxes[4]!;
 
       expect(a.widthFraction, closeTo(0.25, 1e-9));
+      expect(b.widthFraction, closeTo(0.25, 1e-9));
       expect(c.leftFraction, closeTo(0.35, 1e-9));
       expect(e.leftFraction, closeTo(c.leftFraction, 1e-9));
       expect(c.widthFraction, closeTo(0.325, 1e-9));
@@ -439,11 +446,40 @@ void main() {
       );
 
       expect(boxes[0]!.widthFraction, closeTo(0.20, 1e-9));
+      expect(boxes[1]!.widthFraction, closeTo(0.20, 1e-9));
       expect(boxes[5]!.leftFraction, closeTo(0.28, 1e-9));
       expect(boxes[5]!.widthFraction, closeTo(0.36, 1e-9));
       expect(boxes[6]!.leftFraction, closeTo(0.64, 1e-9));
       expect(boxes[6]!.widthFraction, closeTo(0.36, 1e-9));
     });
+
+    test(
+      'cascade compacts a row without leaves to its one needed base lane',
+      () {
+        // a is the container. b owns d/e as overlay leaves, while c starts only
+        // after b ends and becomes a second row with no leaves. a/b/d/e have
+        // four true concurrent lanes, so the real allocator enters Cascade.
+        final List<CascadeItem> items = <CascadeItem>[
+          _item(_at(8), _at(15), position: 0, maxPositions: 4), // a
+          _item(_at(8), _at(10), position: 1, maxPositions: 4), // b
+          _item(_at(9), _at(9, 30), position: 2, maxPositions: 4), // d
+          _item(_at(9), _at(9, 45), position: 3, maxPositions: 4), // e
+          _item(_at(10, 30), _at(12), position: 1, maxPositions: 4), // c
+        ];
+
+        final List<CascadeBox?> boxes = CascadeLayout.resolve(
+          AppointmentOverlapMode.cascade,
+          items,
+        );
+
+        // b's two overlay lanes make branchDepth three, so every base card in
+        // this Cascade subtree needs exactly one of the four equal units.
+        expect(boxes[0]!.widthFraction, closeTo(1 / 4, 1e-9));
+        expect(boxes[1]!.widthFraction, closeTo(1 / 4, 1e-9));
+        expect(boxes[4]!.leftFraction, closeTo(1 / 4, 1e-9));
+        expect(boxes[4]!.widthFraction, closeTo(1 / 4, 1e-9));
+      },
+    );
 
     test('laneFill + §0.3 baseline: no cascade boxes (SF-6 path untouched)', () {
       // In laneFill mode resolve yields all-null, so the render loop falls
@@ -915,24 +951,32 @@ void main() {
       final AppointmentView bbq = views.firstWhere(
         (AppointmentView view) => view.appointment?.subject == 'BBQ',
       );
-      final AppointmentView city = views.firstWhere(
-        (AppointmentView view) => view.appointment?.subject == 'city',
+      final AppointmentView philosophy = views.firstWhere(
+        (AppointmentView view) => view.appointment?.subject == 'philosophy',
       );
-      final Offset cityCenter = city.appointmentRect!.outerRect.center;
+      final Rect philosophyOnBbq = bbq.appointmentRect!.outerRect.intersect(
+        philosophy.appointmentRect!.outerRect,
+      );
       expect(
-        bbq.appointmentRect!.outerRect.contains(cityCenter),
+        philosophyOnBbq.isEmpty,
+        isFalse,
+        reason: 'the compact base lane must still overlap its first overlay',
+      );
+      final Offset philosophyHitPoint = philosophyOnBbq.center;
+      expect(
+        philosophy.appointmentRect!.outerRect.contains(philosophyHitPoint),
         isTrue,
-        reason: 'the device regression requires city to visibly overlay BBQ',
+        reason: 'the hit point must belong to the later-painted cascade child',
       );
 
       final Finder layoutFinder = find.byWidgetPredicate(
         (Widget candidate) => identical(candidate, layout),
       );
       final RenderBox layoutBox = tester.renderObject<RenderBox>(layoutFinder);
-      await tester.tapAt(layoutBox.localToGlobal(cityCenter));
+      await tester.tapAt(layoutBox.localToGlobal(philosophyHitPoint));
       await tester.pump();
 
-      expect(tappedSubjects, <String>['city']);
+      expect(tappedSubjects, <String>['philosophy']);
     },
   );
 }
