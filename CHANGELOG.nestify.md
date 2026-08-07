@@ -2,6 +2,17 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.20 — SF-18 cascade lane recycling (#2859)
+
+Base: upstream `33.2.8`
+
+- SF-18 (refine, Nestify #2859): high-density cascade rows now assign leaves
+  to stable first-fit lanes using the existing effective-end timing semantics.
+  The branch budget uses peak leaf concurrency, and time-disconnected
+  components reuse the complete overlay band. Rows with no reusable lane keep
+  the established #2222 geometry; laneFill and all excluded view paths remain
+  unchanged. Coverage is in `test/sf18_cascade_layout_test.dart`.
+
 ## v33.2.8+nestify.19 — SF-20 appointment overlap details (#2797)
 
 Base: upstream `33.2.8`

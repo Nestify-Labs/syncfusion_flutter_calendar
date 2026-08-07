@@ -273,6 +273,178 @@ void main() {
       }
     });
 
+    test('cascade + #2859 recycles the overlay band between disjoint leaf '
+        'components', () {
+      // a/b bridge two short-event groups into one overlap cluster. The first
+      // group has three concurrent leaves, while f/g start only after c/d/e
+      // finish. They must therefore reuse the whole overlay band rather than
+      // remaining permanent fifth and sixth leaf columns.
+      final List<CascadeItem> items = <CascadeItem>[
+        _item(_at(20), _at(23), position: 0, maxPositions: 5), // a
+        _item(_at(20), _at(23), position: 1, maxPositions: 5), // b
+        _item(_at(20), _at(21, 35), position: 2, maxPositions: 5), // c
+        _item(_at(20), _at(21, 30), position: 3, maxPositions: 5), // d
+        _item(_at(20, 5), _at(21, 25), position: 4, maxPositions: 5), // e
+        _item(_at(21, 45), _at(23), position: 2, maxPositions: 5), // f
+        _item(_at(21, 45), _at(22, 55), position: 3, maxPositions: 5), // g
+      ];
+
+      final List<CascadeBox?> boxes = CascadeLayout.resolve(
+        AppointmentOverlapMode.cascade,
+        items,
+      );
+
+      final CascadeBox a = boxes[0]!;
+      final CascadeBox b = boxes[1]!;
+      final List<CascadeBox> firstComponent = <CascadeBox>[
+        boxes[2]!,
+        boxes[3]!,
+        boxes[4]!,
+      ];
+      final List<CascadeBox> secondComponent = <CascadeBox>[
+        boxes[5]!,
+        boxes[6]!,
+      ];
+
+      expect(a.leftFraction, closeTo(0, 1e-9));
+      expect(a.widthFraction, closeTo(0.20, 1e-9));
+      expect(b.leftFraction, closeTo(0.20, 1e-9));
+      expect(b.widthFraction, closeTo(0.80, 1e-9));
+
+      for (final CascadeBox leaf in <CascadeBox>[
+        ...firstComponent,
+        ...secondComponent,
+      ]) {
+        expect(leaf.leftFraction, greaterThanOrEqualTo(0.28 - 1e-9));
+        expect(_right(leaf), lessThanOrEqualTo(1.0 + 1e-9));
+      }
+
+      for (final CascadeBox leaf in firstComponent) {
+        expect(leaf.widthFraction, closeTo(0.24, 1e-9));
+      }
+      for (final CascadeBox leaf in secondComponent) {
+        expect(leaf.widthFraction, closeTo(0.36, 1e-9));
+      }
+      expect(
+        secondComponent.first.widthFraction,
+        greaterThan(firstComponent.first.widthFraction),
+      );
+      expect(
+        _right(firstComponent[0]),
+        closeTo(firstComponent[1].leftFraction, 1e-9),
+      );
+      expect(
+        _right(firstComponent[1]),
+        closeTo(firstComponent[2].leftFraction, 1e-9),
+      );
+      expect(
+        _right(secondComponent[0]),
+        closeTo(secondComponent[1].leftFraction, 1e-9),
+      );
+    });
+
+    test('cascade + five fully-overlapping leaves keep distinct lanes', () {
+      // The same five leaves as #2859, but all overlap for their entire
+      // duration. They form one component whose peak is five, so first-fit
+      // must allocate five distinct lanes; recycling must not collapse them
+      // onto the same x interval.
+      final List<CascadeItem> items = <CascadeItem>[
+        _item(_at(20), _at(23), position: 0, maxPositions: 7), // a
+        _item(_at(20), _at(23), position: 1, maxPositions: 7), // b
+        _item(_at(20), _at(23), position: 2, maxPositions: 7), // c
+        _item(_at(20), _at(23), position: 3, maxPositions: 7), // d
+        _item(_at(20), _at(23), position: 4, maxPositions: 7), // e
+        _item(_at(20), _at(23), position: 5, maxPositions: 7), // f
+        _item(_at(20), _at(23), position: 6, maxPositions: 7), // g
+      ];
+
+      final List<CascadeBox?> boxes = CascadeLayout.resolve(
+        AppointmentOverlapMode.cascade,
+        items,
+      );
+
+      final CascadeBox a = boxes[0]!;
+      final CascadeBox b = boxes[1]!;
+      final List<CascadeBox> leaves = <CascadeBox>[
+        boxes[2]!,
+        boxes[3]!,
+        boxes[4]!,
+        boxes[5]!,
+        boxes[6]!,
+      ];
+
+      // branchDepth = 1 + peakLeafLanes (5), so the legacy single-component
+      // geometry is retained rather than treating this as a recycling case.
+      expect(a.widthFraction, closeTo(1 / 7, 1e-9));
+      expect(b.leftFraction, closeTo(1 / 7, 1e-9));
+      expect(b.widthFraction, closeTo(6 / 7, 1e-9));
+
+      for (int i = 0; i < leaves.length; i++) {
+        for (int j = i + 1; j < leaves.length; j++) {
+          expect(
+            _intersects(leaves[i], leaves[j]),
+            isFalse,
+            reason: 'fully-overlapping leaves $i and $j need distinct lanes',
+          );
+        }
+      }
+    });
+
+    test('cascade reuses a first-fit lane inside one connected leaf chain', () {
+      // c overlaps d and d overlaps e, so all leaves belong to one time
+      // component. c and e themselves are disjoint and must receive the same
+      // lane; peak leaf concurrency is two, not three.
+      final List<CascadeItem> items = <CascadeItem>[
+        _item(_at(20), _at(23), position: 0, maxPositions: 4), // a
+        _item(_at(20), _at(23), position: 1, maxPositions: 4), // b
+        _item(_at(20), _at(21), position: 2, maxPositions: 4), // c
+        _item(_at(20, 30), _at(21, 30), position: 3, maxPositions: 4), // d
+        _item(_at(21, 15), _at(22), position: 2, maxPositions: 4), // e
+      ];
+
+      final List<CascadeBox?> boxes = CascadeLayout.resolve(
+        AppointmentOverlapMode.cascade,
+        items,
+      );
+
+      final CascadeBox a = boxes[0]!;
+      final CascadeBox c = boxes[2]!;
+      final CascadeBox d = boxes[3]!;
+      final CascadeBox e = boxes[4]!;
+
+      expect(a.widthFraction, closeTo(0.25, 1e-9));
+      expect(c.leftFraction, closeTo(0.35, 1e-9));
+      expect(e.leftFraction, closeTo(c.leftFraction, 1e-9));
+      expect(c.widthFraction, closeTo(0.325, 1e-9));
+      expect(d.leftFraction, closeTo(0.675, 1e-9));
+      expect(d.widthFraction, closeTo(c.widthFraction, 1e-9));
+    });
+
+    test('cascade recycles lanes across back-to-back leaf components', () {
+      // The prior component ends precisely when the next one starts. This is
+      // not a positive-duration overlap, so f/g can reuse its overlay band.
+      final List<CascadeItem> items = <CascadeItem>[
+        _item(_at(20), _at(23), position: 0, maxPositions: 5), // a
+        _item(_at(20), _at(23), position: 1, maxPositions: 5), // b
+        _item(_at(20), _at(21, 35), position: 2, maxPositions: 5), // c
+        _item(_at(20), _at(21, 30), position: 3, maxPositions: 5), // d
+        _item(_at(20, 5), _at(21, 25), position: 4, maxPositions: 5), // e
+        _item(_at(21, 35), _at(23), position: 2, maxPositions: 5), // f
+        _item(_at(21, 35), _at(22, 55), position: 3, maxPositions: 5), // g
+      ];
+
+      final List<CascadeBox?> boxes = CascadeLayout.resolve(
+        AppointmentOverlapMode.cascade,
+        items,
+      );
+
+      expect(boxes[0]!.widthFraction, closeTo(0.20, 1e-9));
+      expect(boxes[5]!.leftFraction, closeTo(0.28, 1e-9));
+      expect(boxes[5]!.widthFraction, closeTo(0.36, 1e-9));
+      expect(boxes[6]!.leftFraction, closeTo(0.64, 1e-9));
+      expect(boxes[6]!.widthFraction, closeTo(0.36, 1e-9));
+    });
+
     test('laneFill + §0.3 baseline: no cascade boxes (SF-6 path untouched)', () {
       // In laneFill mode resolve yields all-null, so the render loop falls
       // through to the byte-identical SF-6 lane geometry for every appointment.
@@ -680,21 +852,9 @@ void main() {
     (WidgetTester tester) async {
       final List<String> tappedSubjects = <String>[];
       final List<Appointment> source = <Appointment>[
-        Appointment(
-          startTime: _at(11),
-          endTime: _at(17),
-          subject: 'market',
-        ),
-        Appointment(
-          startTime: _at(12),
-          endTime: _at(16),
-          subject: 'BBQ',
-        ),
-        Appointment(
-          startTime: _at(14),
-          endTime: _at(16, 30),
-          subject: 'city',
-        ),
+        Appointment(startTime: _at(11), endTime: _at(17), subject: 'market'),
+        Appointment(startTime: _at(12), endTime: _at(16), subject: 'BBQ'),
+        Appointment(startTime: _at(14), endTime: _at(16, 30), subject: 'city'),
         Appointment(
           startTime: _at(14),
           endTime: _at(17),
@@ -710,11 +870,7 @@ void main() {
           endTime: _at(16, 30),
           subject: 'art',
         ),
-        Appointment(
-          startTime: _at(15),
-          endTime: _at(17),
-          subject: 'film',
-        ),
+        Appointment(startTime: _at(15), endTime: _at(17), subject: 'film'),
       ];
       final SfCalendar calendar = SfCalendar(
         initialDisplayDate: _day,
@@ -755,8 +911,7 @@ void main() {
                       date.day == _day.day,
                 ),
           );
-      final List<AppointmentView> views =
-          layout.getAppointmentViewCollection();
+      final List<AppointmentView> views = layout.getAppointmentViewCollection();
       final AppointmentView bbq = views.firstWhere(
         (AppointmentView view) => view.appointment?.subject == 'BBQ',
       );

@@ -3827,17 +3827,7 @@ class CascadeLayout {
             .toList();
     // start asc, then end desc (longer first), then original index for a
     // deterministic, stable order on ties.
-    nodes.sort((_CascadeNode a, _CascadeNode b) {
-      final int c = a.start.compareTo(b.start);
-      if (c != 0) {
-        return c;
-      }
-      final int c2 = b.end.compareTo(a.end);
-      if (c2 != 0) {
-        return c2;
-      }
-      return a.index.compareTo(b.index);
-    });
+    nodes.sort(_compareCascadeNodes);
 
     final List<_CascadeNode> containers = <_CascadeNode>[];
     for (final _CascadeNode node in nodes) {
@@ -3892,9 +3882,18 @@ class CascadeLayout {
   ) {
     final double w = hi - lo;
     final List<_CascadeNode> rows = container.rows ?? const <_CascadeNode>[];
+    // SF-18 (#2859): a row can contain leaves that never coexist. Budget the
+    // branch by its peak concurrent lanes, rather than treating every leaf as
+    // a permanent horizontal member.
+    final Map<_CascadeNode, _CascadeLeafLanePlan> leafPlans =
+        <_CascadeNode, _CascadeLeafLanePlan>{
+          for (final _CascadeNode row in rows)
+            if (row.leaves != null && row.leaves!.isNotEmpty)
+              row: _planLeafLanes(row.leaves!),
+        };
     int branchDepth = 1;
     for (final _CascadeNode r in rows) {
-      final int depth = 1 + (r.leaves?.length ?? 0);
+      final int depth = 1 + (leafPlans[r]?.peakLaneCount ?? 0);
       if (depth > branchDepth) {
         branchDepth = depth;
       }
@@ -3912,14 +3911,6 @@ class CascadeLayout {
         leftFraction: branchLo,
         widthFraction: hi - branchLo,
       );
-      // §0.3「按重叠批次分 z 层」的分层单位是树层级（row 基层 vs leaves 覆盖
-      // 层），不是 leaves 内部的 start slot：6 深簇 Google 实测（#2222 T6 v2）
-      // 把全部 leaves 放同一 z 平面并排；per-slot z 级联会让后批尾成员整段盖
-      // 住前批尾成员（d 被 f 遮死）。覆盖层相对 row 左缘右移一次 step。
-      // 层内宽度分配（T6 对照 Google 实测）：尾成员各占 1 unit（末位顶到列右
-      // 缘），首成员（最早/最长者，排序 start asc + end desc 保证）吸收剩余
-      // 宽度——C 宽 D 窄。band 容不下 k×unit 的深簇退化为层内等分（细条，
-      // 与「无可读性 floor」决策一致）。
       final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
       if (leaves.isEmpty) {
         continue;
@@ -3928,8 +3919,31 @@ class CascadeLayout {
       if (layerLeft > maxLeft) {
         layerLeft = maxLeft;
       }
-      final int k = leaves.length;
       final double band = hi - layerLeft;
+      final _CascadeLeafLanePlan lanePlan = leafPlans[r]!;
+      if (lanePlan.recyclesBand) {
+        // SF-18 (#2859): each time-disconnected component gets the full
+        // overlay band. Its first-fit lanes are safe to reuse because no two
+        // leaves within a lane overlap under the existing minute semantics.
+        for (final _CascadeLeafComponent component in lanePlan.components) {
+          final double laneWidth = band / component.laneCount;
+          for (final _CascadeLeafLaneAssignment assignment
+              in component.assignments) {
+            out[assignment.node.index] = CascadeBox(
+              leftFraction: layerLeft + assignment.lane * laneWidth,
+              widthFraction: laneWidth,
+            );
+          }
+        }
+        continue;
+      }
+
+      // §0.3「按重叠批次分 z 层」的分层单位是树层级（row 基层 vs leaves 覆盖
+      // 层），不是 leaves 内部的 start slot：6 深簇 Google 实测（#2222 T6 v2）
+      // 把全部 leaves 放同一 z 平面并排；per-slot z 级联会让后批尾成员整段盖
+      // 住前批尾成员（d 被 f 遮死）。覆盖层相对 row 左缘右移一次 step。
+      // 未发生 lane 复用时保留原层内公式，锁住 #2222 的定格几何。
+      final int k = leaves.length;
       final double memberUnit = band / k < unit ? band / k : unit;
       final double firstWidth = band - (k - 1) * memberUnit;
       double x = layerLeft;
@@ -3942,6 +3956,87 @@ class CascadeLayout {
         x += width;
       }
     }
+  }
+
+  static int _compareCascadeNodes(_CascadeNode a, _CascadeNode b) {
+    final int c = a.start.compareTo(b.start);
+    if (c != 0) {
+      return c;
+    }
+    final int c2 = b.end.compareTo(a.end);
+    if (c2 != 0) {
+      return c2;
+    }
+    return a.index.compareTo(b.index);
+  }
+
+  /// SF-18 (#2859): splits a row's stable leaves into time-connected
+  /// components and assigns each component's leaves to first-fit reusable
+  /// lanes. [effectiveEnd] is already carried in [_CascadeNode.end].
+  static _CascadeLeafLanePlan _planLeafLanes(List<_CascadeNode> leaves) {
+    final List<_CascadeNode> ordered = List<_CascadeNode>.from(leaves)
+      ..sort(_compareCascadeNodes);
+    final List<List<_CascadeNode>> componentLeaves = <List<_CascadeNode>>[];
+    List<_CascadeNode> current = <_CascadeNode>[];
+    DateTime? currentLatestEnd;
+
+    for (final _CascadeNode leaf in ordered) {
+      if (currentLatestEnd != null &&
+          _laneCanBeReusedAfter(currentLatestEnd, leaf.start)) {
+        componentLeaves.add(current);
+        current = <_CascadeNode>[];
+        currentLatestEnd = null;
+      }
+      current.add(leaf);
+      if (currentLatestEnd == null || leaf.end.isAfter(currentLatestEnd)) {
+        currentLatestEnd = leaf.end;
+      }
+    }
+    if (current.isNotEmpty) {
+      componentLeaves.add(current);
+    }
+
+    final List<_CascadeLeafComponent> components =
+        componentLeaves.map(_assignFirstFitLanes).toList();
+    final int peakLaneCount = components.fold<int>(
+      0,
+      (int peak, _CascadeLeafComponent component) =>
+          component.laneCount > peak ? component.laneCount : peak,
+    );
+    return _CascadeLeafLanePlan(components, peakLaneCount);
+  }
+
+  static _CascadeLeafComponent _assignFirstFitLanes(List<_CascadeNode> leaves) {
+    final List<DateTime> laneEnds = <DateTime>[];
+    final List<_CascadeLeafLaneAssignment> assignments =
+        <_CascadeLeafLaneAssignment>[];
+    for (final _CascadeNode leaf in leaves) {
+      int lane = -1;
+      for (int i = 0; i < laneEnds.length; i++) {
+        if (_laneCanBeReusedAfter(laneEnds[i], leaf.start)) {
+          lane = i;
+          break;
+        }
+      }
+      if (lane == -1) {
+        lane = laneEnds.length;
+        laneEnds.add(leaf.end);
+      } else {
+        laneEnds[lane] = leaf.end;
+      }
+      assignments.add(_CascadeLeafLaneAssignment(leaf, lane));
+    }
+    return _CascadeLeafComponent(assignments, laneEnds.length);
+  }
+
+  /// The existing cascade overlap contract treats equal minute slots as
+  /// colliding, except that exactly back-to-back appointments are distinct.
+  static bool _laneCanBeReusedAfter(DateTime end, DateTime start) {
+    if (end == start) {
+      return true;
+    }
+    return end.isBefore(start) &&
+        !CalendarViewHelper.isSameTimeSlot(end, start);
   }
 
   /// Time overlap test for cascade clustering. OQ-6: ignores seconds, mirroring
@@ -3982,4 +4077,35 @@ class _CascadeNode {
   _CascadeNode? row;
   List<_CascadeNode>? rows;
   List<_CascadeNode>? leaves;
+}
+
+/// SF-18 (#2859): immutable first-fit allocation for one row's leaves.
+class _CascadeLeafLanePlan {
+  const _CascadeLeafLanePlan(this.components, this.peakLaneCount);
+
+  final List<_CascadeLeafComponent> components;
+  final int peakLaneCount;
+
+  bool get recyclesBand =>
+      components.length > 1 ||
+      components.any(
+        (_CascadeLeafComponent component) =>
+            component.assignments.length > component.laneCount,
+      );
+}
+
+/// SF-18 (#2859): leaves connected through overlapping time intervals.
+class _CascadeLeafComponent {
+  const _CascadeLeafComponent(this.assignments, this.laneCount);
+
+  final List<_CascadeLeafLaneAssignment> assignments;
+  final int laneCount;
+}
+
+/// SF-18 (#2859): one leaf's stable first-fit lane within its component.
+class _CascadeLeafLaneAssignment {
+  const _CascadeLeafLaneAssignment(this.node, this.lane);
+
+  final _CascadeNode node;
+  final int lane;
 }
