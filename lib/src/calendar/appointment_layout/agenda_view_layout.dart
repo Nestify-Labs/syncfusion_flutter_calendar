@@ -845,12 +845,17 @@ class _AgendaViewRenderObject extends CustomCalendarRenderObject {
           ..style = PaintingStyle.fill;
     final double left = offset.dx;
     final double right = offset.dx + size.width;
-    canvas.drawCircle(Offset(left + 5, lineTop), 4, indicatorPaint);
+    // 线从圆点**圆心**起画：圆心 left+dotCenterX、半径 dotRadius，若线仍从 left
+    // 起，就会在圆点左侧透出 (dotCenterX - dotRadius) 那一小截，读起来像圆点没
+    // 压在线头上。圆点后画，确保盖在线之上。
+    const double dotCenterX = 5;
+    const double dotRadius = 4;
     canvas.drawLine(
-      Offset(left, lineTop),
+      Offset(left + dotCenterX, lineTop),
       Offset(right, lineTop),
       indicatorPaint,
     );
+    canvas.drawCircle(Offset(left + dotCenterX, lineTop), dotRadius, indicatorPaint);
   }
 
   @override
