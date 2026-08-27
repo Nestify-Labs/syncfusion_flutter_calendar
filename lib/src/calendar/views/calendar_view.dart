@@ -437,12 +437,18 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
                           .calendar
                           .timeSlotViewSettings
                           .timeIntervalWidth))) {
-        if (_currentChildIndex == 0) {
-          _previousViewKey.currentState!._retainScrolledDateTime();
-        } else if (_currentChildIndex == 1) {
-          _currentViewKey.currentState!._retainScrolledDateTime();
-        } else if (_currentChildIndex == 2) {
-          _nextViewKey.currentState!._retainScrolledDateTime();
+        // SF-21: an explicit scale focal point is preserved by the child
+        // ScrollPosition during new-dimension correction. The upstream
+        // retain path preserves the viewport's top time and would overwrite
+        // that focal correction later in the same reflow.
+        if (!widget.calendar.preserveTimelineScaleOffset) {
+          if (_currentChildIndex == 0) {
+            _previousViewKey.currentState!._retainScrolledDateTime();
+          } else if (_currentChildIndex == 1) {
+            _currentViewKey.currentState!._retainScrolledDateTime();
+          } else if (_currentChildIndex == 2) {
+            _nextViewKey.currentState!._retainScrolledDateTime();
+          }
         }
       }
       _children.clear();
@@ -879,6 +885,27 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
   SfCalendarEmptySlotQueryResult? queryEmptySlotAt(Offset globalPos) {
     return _currentViewKey.currentState?.queryEmptySlotAt(globalPos);
+  }
+
+  /// [SF-21] Forward a scale-offset command to the currently visible page.
+  /// Public only because sfcalendar.dart reaches this private State through
+  /// `dynamic` across the library boundary.
+  double? setTimelineScrollOffset(
+    double targetOffset, {
+    bool allowOutOfRange = false,
+  }) {
+    final _CalendarViewState? currentViewState;
+    if (_currentChildIndex == 0) {
+      currentViewState = _previousViewKey.currentState;
+    } else if (_currentChildIndex == 1) {
+      currentViewState = _currentViewKey.currentState;
+    } else {
+      currentViewState = _nextViewKey.currentState;
+    }
+    return currentViewState?.setTimelineScrollOffset(
+      targetOffset,
+      allowOutOfRange: allowOutOfRange,
+    );
   }
   // ─── end SF-8 patch ────────────────────────────────────────────────────
 
@@ -6861,6 +6888,33 @@ class _CalendarViewState extends State<_CalendarView>
     if (sfState == null) return;
     // ignore: avoid_dynamic_calls
     (sfState as dynamic).dispatchTimelineCoordinatesToHostInternal(coords);
+  }
+
+  /// [SF-21] Apply a host-prepositioned scale offset to this timeline page.
+  double? setTimelineScrollOffset(
+    double targetOffset, {
+    required bool allowOutOfRange,
+  }) {
+    if (!mounted) {
+      return null;
+    }
+    final ScrollController? scroll = _scrollController;
+    if (scroll == null || !scroll.hasClients) {
+      return null;
+    }
+    final ScrollPosition position = scroll.position;
+    if (!position.hasPixels) {
+      return null;
+    }
+
+    final double inRangeTarget =
+        targetOffset
+            .clamp(position.minScrollExtent, position.maxScrollExtent);
+    position.jumpTo(inRangeTarget);
+    if (allowOutOfRange && (targetOffset - inRangeTarget).abs() >= 0.5) {
+      position.correctPixels(targetOffset);
+    }
+    return position.pixels;
   }
 
   /// [SF-8 fix #2148] 解析非 day 视图 pinned all-day overlay 的当前像素高度。

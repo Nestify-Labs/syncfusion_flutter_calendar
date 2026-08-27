@@ -231,6 +231,8 @@ class SfCalendar extends StatefulWidget {
     this.agendaSortAllDayAppointmentsFirst = false,
     this.allDayPanelChronologicalSort = false,
     this.onTimelineCoordinatesChanged,
+    // [SF-21] Host-prepositioned focal offset preservation.
+    this.preserveTimelineScaleOffset = false,
     this.appointmentOverlapMode = AppointmentOverlapMode.laneFill,
   }) : assert(firstDayOfWeek >= 1 && firstDayOfWeek <= 7),
        assert(headerHeight >= 0),
@@ -2179,6 +2181,16 @@ class SfCalendar extends StatefulWidget {
   /// reverse mapping such as `globalY → time`).
   final void Function(SfCalendarTimelineCoordinates coords)?
   onTimelineCoordinatesChanged;
+
+  /// [SF-21] Whether a host-driven vertical timeslot scale change has already
+  /// prepositioned the timeline scroll offset for its focal-point anchor.
+  ///
+  /// While true, an interval-height change skips Syncfusion's normal
+  /// viewport-top `_retainScrolledDateTime` path so it cannot overwrite the
+  /// offset prepared by the host before the first reflow paint.
+  ///
+  /// Default false preserves the original scroll-retention behavior.
+  final bool preserveTimelineScaleOffset;
 
   /// [SF-18] Nestify patch: selects the overlap-resolution strategy for timed
   /// appointments in the day / week / workWeek view.
@@ -4244,6 +4256,28 @@ class _SfCalendarState extends State<SfCalendar>
     final dynamic dyn = state;
     final Object? result = dyn.queryEmptySlotAt(globalPosition) as Object?;
     return result is SfCalendarEmptySlotQueryResult ? result : null;
+  }
+
+  /// [SF-21] Nestify patch: forward host scale-offset commands through the
+  /// stable [SfCalendarTimelineQueryApi] key instead of a snapshot closure.
+  @override
+  double? setTimelineScrollOffset(
+    double targetOffset, {
+    bool allowOutOfRange = false,
+  }) {
+    final State<StatefulWidget>? state = _customScrollViewKey.currentState;
+    if (state == null) {
+      return null;
+    }
+    // ignore: avoid_dynamic_calls
+    final dynamic dyn = state;
+    final Object? result =
+        dyn.setTimelineScrollOffset(
+              targetOffset,
+              allowOutOfRange: allowOutOfRange,
+            )
+            as Object?;
+    return result is num ? result.toDouble() : null;
   }
 
   /// [SF-8] Nestify patch: re-export to host via callback.
@@ -13530,6 +13564,17 @@ mixin SfCalendarTimelineQueryApi on State<SfCalendar> {
   /// view is not a timeline view; otherwise returns a structured result so
   /// the host can route to either empty-slot ghost or appointment promote.
   SfCalendarEmptySlotQueryResult? queryEmptySlotAt(Offset globalPosition);
+
+  /// [SF-21] Moves the current visible detail timeline to [targetOffset].
+  ///
+  /// [allowOutOfRange] supports the synchronous pre-layout half of a scale
+  /// transaction, where the target is valid for the next interval height but
+  /// still exceeds the old extent. Returns the applied pixels, or `null` when
+  /// the current view is not a mounted detail timeline.
+  double? setTimelineScrollOffset(
+    double targetOffset, {
+    bool allowOutOfRange = false,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────

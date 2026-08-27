@@ -2,6 +2,19 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.22 — SF-21 focal-point timeline scaling (#3112)
+
+Base: upstream `33.2.8`
+
+- SF-21 (new, Nestify #3112 phone follow-up): adds
+  `SfCalendar.preserveTimelineScaleOffset` plus the current-page command
+  `SfCalendarTimelineQueryApi.setTimelineScrollOffset`. Hosts can
+  preposition their focal-point offset before changing `timeIntervalHeight`
+  without guessing among the three mounted page positions, then bypass the
+  component's competing viewport-top retention for that rebuild. The default
+  `false` path is unchanged. Widget coverage is in
+  `test/sf21_timeline_scale_anchor_test.dart`.
+
 ## v33.2.8+nestify.20 — SF-18 Cascade lane recycling and base-width compaction (#2859)
 
 Base: upstream `33.2.8`
