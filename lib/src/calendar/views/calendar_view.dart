@@ -6553,6 +6553,9 @@ class _CalendarViewState extends State<_CalendarView>
   _SelectionPainter? _selectionPainter;
   double _allDayHeight = 0;
   late double _timeIntervalHeight;
+  // SF-21: A scale pre-layout jump must not expose new scroll pixels paired
+  // with the previous interval height to the host coordinate callback.
+  bool _suppressTimelineCoordinatesForScalePreposition = false;
   final UpdateCalendarStateDetails _updateCalendarStateDetails =
       UpdateCalendarStateDetails();
   ValueNotifier<AllDayPanelSelectionDetails?> _allDaySelectionNotifier =
@@ -6729,9 +6732,10 @@ class _CalendarViewState extends State<_CalendarView>
     /// day to week views to avoid the blank space at the bottom of the view.
     final bool isCurrentView =
         _updateCalendarStateDetails.currentViewVisibleDates ==
-        widget.visibleDates;
-    _updateAllDayHeight(isCurrentView);
-
+            widget.visibleDates;
+    // SF-21: The all-day update publishes timeline coordinates. Adopt the
+    // incoming interval height first so a host-prepositioned scroll offset is
+    // never paired with the previous scale during this rebuild.
     _timeIntervalHeight = _getTimeIntervalHeight(
       widget.calendar,
       widget.view,
@@ -6740,6 +6744,7 @@ class _CalendarViewState extends State<_CalendarView>
       widget.visibleDates.length,
       widget.isMobilePlatform,
     );
+    _updateAllDayHeight(isCurrentView);
 
     /// Clear the all day panel selection when the calendar view changed
     /// Eg., if select the all day panel and switch to month view and again
@@ -6830,6 +6835,10 @@ class _CalendarViewState extends State<_CalendarView>
   //   method（同 library 私有访问受限）。
 
   void _pushTimelineCoordinates(bool isCurrentView) {
+    // SF-21: Do not expose a pre-layout scale offset with stale geometry.
+    if (_suppressTimelineCoordinatesForScalePreposition) {
+      return;
+    }
     if (!isCurrentView) return;
     final ScrollController? scroll = _scrollController;
     if (scroll == null || !scroll.hasClients) return;
@@ -6907,10 +6916,20 @@ class _CalendarViewState extends State<_CalendarView>
       return null;
     }
 
-    final double inRangeTarget =
-        targetOffset
-            .clamp(position.minScrollExtent, position.maxScrollExtent);
-    position.jumpTo(inRangeTarget);
+    final double inRangeTarget = targetOffset.clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    if (allowOutOfRange) {
+      _suppressTimelineCoordinatesForScalePreposition = true;
+      try {
+        position.jumpTo(inRangeTarget);
+      } finally {
+        _suppressTimelineCoordinatesForScalePreposition = false;
+      }
+    } else {
+      position.jumpTo(inRangeTarget);
+    }
     if (allowOutOfRange && (targetOffset - inRangeTarget).abs() >= 0.5) {
       position.correctPixels(targetOffset);
     }

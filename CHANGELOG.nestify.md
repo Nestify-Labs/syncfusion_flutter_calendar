@@ -2,6 +2,16 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.23 — SF-21 atomic timeline scale coordinates (#3112)
+
+Base: upstream `33.2.8`
+
+- SF-21 (refine, Nestify #3112): a pre-layout scale-offset command no longer
+  publishes an intermediate host coordinate snapshot that pairs the new scroll
+  offset with the previous interval height. Rebuild-time coordinate publications
+  also adopt the incoming interval height before notifying the host. Normal
+  scroll callbacks and the post-layout coordinate update remain unchanged.
+
 ## v33.2.8+nestify.22 — SF-21 focal-point timeline scaling (#3112)
 
 Base: upstream `33.2.8`

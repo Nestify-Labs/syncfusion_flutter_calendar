@@ -152,4 +152,91 @@ void main() {
     expect(position.maxScrollExtent, greaterThan(oldMaxScrollExtent));
     expect(position.pixels, closeTo(targetOffset, 0.5));
   });
+
+  testWidgets(
+    'SF-21 prelayout offset does not publish stale-height coordinates',
+    (WidgetTester tester) async {
+      double intervalHeight = 60;
+      bool preserveScaleOffset = false;
+      final coordinateHistory = <SfCalendarTimelineCoordinates>[];
+      final calendarKey = GlobalKey<SfCalendarTimelineQueryApi>();
+      late StateSetter rebuild;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (BuildContext context, StateSetter setState) {
+                rebuild = setState;
+                return SfCalendar(
+                  key: calendarKey,
+                  headerHeight: 0,
+                  viewHeaderHeight: 56,
+                  preserveTimelineScaleOffset: preserveScaleOffset,
+                  onTimelineCoordinatesChanged: coordinateHistory.add,
+                  timeSlotViewSettings: TimeSlotViewSettings(
+                    timeIntervalHeight: intervalHeight,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final position = find
+          .descendant(
+            of: find.byType(SfCalendar),
+            matching: find.byType(Scrollable),
+          )
+          .hitTestable()
+          .evaluate()
+          .map((element) => (element as StatefulElement).state)
+          .whereType<ScrollableState>()
+          .map((state) => state.position)
+          .singleWhere(
+            (position) =>
+                position.axis == Axis.vertical &&
+                position.maxScrollExtent > 500,
+          );
+      position.jumpTo(position.maxScrollExtent * 0.2);
+      await tester.pump();
+      await tester.pump();
+      coordinateHistory.clear();
+
+      final normalTarget = position.pixels + 20;
+      calendarKey.currentState!.setTimelineScrollOffset(normalTarget);
+      expect(coordinateHistory, isNotEmpty);
+      expect(coordinateHistory.last.scrollOffset, closeTo(normalTarget, 0.5));
+      coordinateHistory.clear();
+
+      final targetOffset = position.pixels + 80;
+      final applied = calendarKey.currentState!.setTimelineScrollOffset(
+        targetOffset,
+        allowOutOfRange: true,
+      );
+
+      expect(applied, closeTo(targetOffset, 0.5));
+      expect(coordinateHistory, isEmpty);
+
+      rebuild(() {
+        preserveScaleOffset = true;
+        intervalHeight = 120;
+      });
+      await tester.pump();
+      await tester.pump();
+
+      expect(coordinateHistory, isNotEmpty);
+      expect(
+        coordinateHistory.map((value) => value.intervalHeight),
+        everyElement(120),
+        reason:
+            'The rebuild must not publish the prepositioned offset before '
+            'adopting the new interval height.',
+      );
+      expect(coordinateHistory.last.intervalHeight, 120);
+      expect(coordinateHistory.last.scrollOffset, closeTo(targetOffset, 0.5));
+    },
+  );
 }
