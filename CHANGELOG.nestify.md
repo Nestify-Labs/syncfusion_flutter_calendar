@@ -2,6 +2,12 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.24 — SF-8 coordinate dispatch ordering (#3350)
+
+Base: upstream `33.2.8`
+
+- SF-8: discard stale deferred layout coordinates after a newer scroll snapshot; no-callback behavior is unchanged. Day/Week/WorkWeek regression coverage: `test/sf8_dispatch_order_test.dart`.
+
 ## v33.2.8+nestify.23 — SF-21 atomic timeline scale coordinates (#3112)
 
 Base: upstream `33.2.8`

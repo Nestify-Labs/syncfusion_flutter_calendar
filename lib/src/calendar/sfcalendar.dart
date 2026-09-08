@@ -4290,9 +4290,13 @@ class _SfCalendarState extends State<SfCalendar>
   /// **Internal forward target — public only because Dart's library-private
   /// members are not accessible via `dynamic` across libraries.** Host
   /// should not invoke this directly.
+  // SF-8: reject a deferred layout snapshot after newer scroll truth arrived.
+  int _timelineCoordinatesDispatchGeneration = 0;
+
   void dispatchTimelineCoordinatesToHostInternal(
     SfCalendarTimelineCoordinates coords,
   ) {
+    final int generation = ++_timelineCoordinatesDispatchGeneration;
     final void Function(SfCalendarTimelineCoordinates)? cb =
         widget.onTimelineCoordinatesChanged;
     if (cb == null) return;
@@ -4302,7 +4306,9 @@ class _SfCalendarState extends State<SfCalendar>
         phase == SchedulerPhase.midFrameMicrotasks;
     if (inBuildOrLayout) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+        if (!mounted || generation != _timelineCoordinatesDispatchGeneration) {
+          return;
+        }
         // re-read in case widget changed during the frame
         final void Function(SfCalendarTimelineCoordinates)? cb2 =
             widget.onTimelineCoordinatesChanged;
