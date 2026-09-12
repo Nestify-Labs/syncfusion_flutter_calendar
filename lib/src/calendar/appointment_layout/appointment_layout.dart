@@ -3624,7 +3624,7 @@ class CascadeBox {
 ///    C+D overlay stack.
 /// 2. **Widths by branch depth** (forward pressure): `branchDepth` = the
 ///    deepest row stack = `1 + max(row.leaves)` (= 3 here). `unit =
-///    width / (branchDepth + 1)` (= 1/4). The container and every row each get
+///    width / (branchDepth + 1)` (= 1/4). The container and dense rows each get
 ///    one clean `unit` column (A/B → narrow); leaves own the remaining overlay
 ///    region when present.
 /// 3. **Overlay layer** (cascade): ALL of a row's leaves form **one** overlay
@@ -3648,6 +3648,10 @@ class CascadeBox {
 /// 6-deep cluster (unit = 1/6): a `[0, 1/6]`, b `[1/6, 1/6]`,
 /// c `[.2333, .2667]`, d `[.5, 1/6]`, e `[2/3, 1/6]`, f `[5/6, 1/6]` —
 /// c/d/e/f pairwise disjoint; only c overlaps b (Google parity leaves, #2222).
+/// SF-18 (#3461): a sparse sibling row with one peak leaf lane shares the
+/// remaining branch side by side with its leaves, even when another row
+/// promotes the connected cluster to cascade. Rows without leaves retain
+/// their base unit; the container and dense-row geometry stay unchanged.
 ///
 /// The exact offset step has no industry standard and is tuned on-device
 /// against Google Calendar in T6 (OQ-3); only the *shape* (the invariants
@@ -3910,12 +3914,30 @@ class CascadeLayout {
       final List<_CascadeNode> leaves = r.leaves ?? const <_CascadeNode>[];
       out[r.index] = CascadeBox(
         leftFraction: branchLo,
-        // SF-18 (#2859 Stage 3): every Cascade row owns exactly one base lane.
-        // Leaving a row without leaves at the remaining branch width made the
-        // same Cascade cluster follow two different width rules.
+        // SF-18 (#2859 Stage 3): dense rows and rows without leaves own one
+        // base lane. The sparse-row branch below handles the #3461 exception.
         widthFraction: unit,
       );
       if (leaves.isEmpty) {
+        continue;
+      }
+      // SF-18 (#3461): a dense sibling row can promote the whole connected
+      // cluster to cascade. A row with only one concurrent leaf still has
+      // just three lanes (container + row + leaf), so share the remaining
+      // branch side by side instead of letting that leaf cover the row.
+      final _CascadeLeafLanePlan lanePlan = leafPlans[r]!;
+      if (2 + lanePlan.peakLaneCount < kCascadeMinColumns) {
+        final double laneWidth = (hi - branchLo) / 2;
+        out[r.index] = CascadeBox(
+          leftFraction: branchLo,
+          widthFraction: laneWidth,
+        );
+        for (final _CascadeNode leaf in leaves) {
+          out[leaf.index] = CascadeBox(
+            leftFraction: branchLo + laneWidth,
+            widthFraction: laneWidth,
+          );
+        }
         continue;
       }
       double layerLeft = branchLo + step;
@@ -3923,7 +3945,6 @@ class CascadeLayout {
         layerLeft = maxLeft;
       }
       final double band = hi - layerLeft;
-      final _CascadeLeafLanePlan lanePlan = leafPlans[r]!;
       if (lanePlan.recyclesBand) {
         // SF-18 (#2859): each time-disconnected component gets the full
         // overlay band. Its first-fit lanes are safe to reuse because no two
