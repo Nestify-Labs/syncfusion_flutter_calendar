@@ -2,7 +2,7 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
-## v33.2.8+nestify.25 — SF-18 sparse rows in dense clusters (#3461, unreleased)
+## v33.2.8+nestify.25 — SF-18 sparse rows in dense clusters (#3461)
 
 - SF-18: keep three-card rows side by side when a dense sibling promotes their connected cluster; retain dense overlays, timestamps and the default lane-fill path. Shared by Phone and Pad; covered by `test/sf18_sparse_branch_test.dart`.
 
