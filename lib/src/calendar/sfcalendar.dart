@@ -4264,6 +4264,7 @@ class _SfCalendarState extends State<SfCalendar>
   double? setTimelineScrollOffset(
     double targetOffset, {
     bool allowOutOfRange = false,
+    double? nextIntervalHeight,
   }) {
     final State<StatefulWidget>? state = _customScrollViewKey.currentState;
     if (state == null) {
@@ -4275,6 +4276,7 @@ class _SfCalendarState extends State<SfCalendar>
         dyn.setTimelineScrollOffset(
               targetOffset,
               allowOutOfRange: allowOutOfRange,
+              nextIntervalHeight: nextIntervalHeight,
             )
             as Object?;
     return result is num ? result.toDouble() : null;
@@ -13577,9 +13579,18 @@ mixin SfCalendarTimelineQueryApi on State<SfCalendar> {
   /// transaction, where the target is valid for the next interval height but
   /// still exceeds the old extent. Returns the applied pixels, or `null` when
   /// the current view is not a mounted detail timeline.
+  ///
+  /// [SF-21] With [allowOutOfRange], an optional positive, finite
+  /// [nextIntervalHeight] publishes the prepared offset and height together
+  /// before layout. Call outside build/layout, then synchronously configure
+  /// that height and enable [SfCalendar.preserveTimelineScaleOffset] for the
+  /// next frame. This lets a host ruler render the same first scaled frame.
+  /// The next layout replaces the predicted extent with its measured extent.
+  /// Omitting this parameter preserves the deferred-coordinate behavior.
   double? setTimelineScrollOffset(
     double targetOffset, {
     bool allowOutOfRange = false,
+    double? nextIntervalHeight,
   });
 }
 

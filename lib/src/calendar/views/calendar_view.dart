@@ -209,6 +209,41 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   // the three children which to be added into the layout
   final List<_CalendarView> _children = <_CalendarView>[];
 
+  // SF-8: all paging surfaces and the external ruler share one committed top.
+  late final ValueNotifier<double> _timelineViewportTop;
+  bool _timelineViewportUpdateScheduled = false;
+
+  void _updateTimelineViewportTop(_CalendarViewState source, double top) {
+    if (!identical(source, _getCurrentViewByVisibleDates()) ||
+        _timelineViewportTop.value == top) {
+      return;
+    }
+    final SchedulerPhase phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      if (_timelineViewportUpdateScheduled) {
+        return;
+      }
+      _timelineViewportUpdateScheduled = true;
+      SchedulerBinding.instance.scheduleFrameCallback((_) {
+        _timelineViewportUpdateScheduled = false;
+        if (!mounted || widget.calendar.onTimelineCoordinatesChanged == null) {
+          return;
+        }
+        // Resolve the current owner again: never commit a queued old-page value.
+        final _CalendarViewState? current = _getCurrentViewByVisibleDates();
+        if (current == null || !current.mounted) {
+          return;
+        }
+        current.widget.getCalendarState(current._updateCalendarStateDetails);
+        current._updateAllDayHeight(true);
+      });
+      return;
+    }
+    _timelineViewportTop.value = top;
+  }
+
   // holds the index of the current displaying view
   int _currentChildIndex = 1;
 
@@ -285,6 +320,13 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
   @override
   void initState() {
+    // SF-8: a shared initial origin also covers the first layout before seed.
+    _timelineViewportTop = ValueNotifier<double>(
+      CalendarViewHelper.getViewHeaderHeight(
+        widget.calendar.viewHeaderHeight,
+        widget.view,
+      ),
+    );
     _dragDetails = ValueNotifier<_DragPaintDetails>(
       _DragPaintDetails(position: ValueNotifier<Offset?>(null)),
     );
@@ -863,6 +905,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
   @override
   void dispose() {
+    // SF-8: deferred publication checks mounted before touching this notifier.
+    _timelineViewportTop.dispose();
     _animationController.dispose();
     _animation.removeListener(animationListener);
     _focusNode.dispose();
@@ -893,9 +937,14 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   double? setTimelineScrollOffset(
     double targetOffset, {
     bool allowOutOfRange = false,
+    double? nextIntervalHeight,
   }) {
     final _CalendarViewState? currentViewState;
-    if (_currentChildIndex == 0) {
+    // SF-21: visible dates advance before the paging animation's child index.
+    // A prepared scale must target the arriving page during that interval.
+    if (nextIntervalHeight != null) {
+      currentViewState = _getCurrentViewByVisibleDates();
+    } else if (_currentChildIndex == 0) {
       currentViewState = _previousViewKey.currentState;
     } else if (_currentChildIndex == 1) {
       currentViewState = _currentViewKey.currentState;
@@ -905,6 +954,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     return currentViewState?.setTimelineScrollOffset(
       targetOffset,
       allowOutOfRange: allowOutOfRange,
+      nextIntervalHeight: nextIntervalHeight,
     );
   }
   // ─── end SF-8 patch ────────────────────────────────────────────────────
@@ -968,10 +1018,9 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       yPosition = yPosition - details.dy;
       _dragDifferenceOffset = Offset(xPosition, yPosition);
     } else {
+      // SF-8: preserve the rendered viewport origin during height handoff.
       final double allDayHeight =
-          currentState._isExpanded
-              ? _updateCalendarStateDetails.allDayPanelHeight
-              : currentState._allDayHeight;
+          currentState._effectiveAllDayHeight(viewHeaderHeight);
       xPosition = appointmentPosition.dx - details.dx;
       yPosition =
           appointmentPosition.dy +
@@ -1110,10 +1159,9 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
     final Offset appointmentPosition = details + _dragDifferenceOffset!;
     final _CalendarViewState currentState = _getCurrentViewByVisibleDates()!;
+    // SF-8: preserve the rendered viewport origin during height handoff.
     final double allDayHeight =
-        currentState._isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : currentState._allDayHeight;
+        currentState._effectiveAllDayHeight(viewHeaderHeight);
 
     final double timeIntervalHeight = currentState._getTimeIntervalHeight(
       widget.calendar,
@@ -2299,10 +2347,9 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
     final Offset appointmentPosition = details + _dragDifferenceOffset!;
     final _CalendarViewState currentState = _getCurrentViewByVisibleDates()!;
+    // SF-8: preserve the rendered viewport origin during height handoff.
     final double allDayHeight =
-        currentState._isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : currentState._allDayHeight;
+        currentState._effectiveAllDayHeight(viewHeaderHeight);
     final double timeIntervalHeight = currentState._getTimeIntervalHeight(
       widget.calendar,
       widget.view,
@@ -6624,7 +6671,12 @@ class _CalendarViewState extends State<_CalendarView>
         final bool isCurrentView =
             _updateCalendarStateDetails.currentViewVisibleDates ==
                 widget.visibleDates;
-        _pushTimelineCoordinates(isCurrentView);
+        // SF-8: resolve this tick before notifying the host, not last frame's height.
+        if (widget.calendar.onTimelineCoordinatesChanged != null) {
+          _updateAllDayHeight(isCurrentView);
+        } else {
+          _pushTimelineCoordinates(isCurrentView);
+        }
       });
 
       _expanderAnimationController = AnimationController(
@@ -6834,7 +6886,54 @@ class _CalendarViewState extends State<_CalendarView>
   // - 跨 library 调用 forward 时用 `dynamic` cast 访问私有 State 的 public
   //   method（同 library 私有访问受限）。
 
-  void _pushTimelineCoordinates(bool isCurrentView) {
+  // SF-8: only callbacks consumers opt into a fixed, shared paging viewport.
+  _CustomCalendarScrollViewState? get _timelineViewportOwner =>
+      widget.calendar.onTimelineCoordinatesChanged == null ||
+              (widget.view != CalendarView.day &&
+                  widget.view != CalendarView.week &&
+                  widget.view != CalendarView.workWeek)
+          ? null
+          : context.findAncestorStateOfType<_CustomCalendarScrollViewState>();
+
+  double get _resolvedTimelineViewportTop {
+    final double header = CalendarViewHelper.getViewHeaderHeight(
+      widget.calendar.viewHeaderHeight, widget.view,
+    );
+    final bool isDay = CalendarViewHelper.isDayView(
+      widget.view,
+      widget.calendar.timeSlotViewSettings.numberOfDaysInView,
+      widget.calendar.timeSlotViewSettings.nonWorkingDays,
+      widget.calendar.monthViewSettings.numberOfWeeksInView,
+    );
+    return isDay ? math.max(header, _allDayHeight) : header + _resolvePinnedAllDayHeight();
+  }
+
+  double get _effectiveTimelineViewportTop =>
+      _timelineViewportOwner?._timelineViewportTop.value ?? _resolvedTimelineViewportTop;
+
+  // SF-8: pointer/drag conversions use the same committed boundary as layout.
+  double _effectiveAllDayHeight(double header) => _timelineViewportOwner == null
+      ? (_isExpanded ? _updateCalendarStateDetails.allDayPanelHeight : _allDayHeight)
+      : _effectiveTimelineViewportTop - header;
+
+  Widget _positionTimelineViewport(Widget child, double fallbackTop) {
+    final _CustomCalendarScrollViewState? owner = _timelineViewportOwner;
+    if (owner == null) {
+      return Positioned(top: fallbackTop, left: 0, right: 0, bottom: 0, child: child);
+    }
+    // SF-8: height ticks rebuild only positioning; appointment children stay cached.
+    return ValueListenableBuilder<double>(
+      valueListenable: owner._timelineViewportTop,
+      child: child,
+      builder: (BuildContext context, double top, Widget? child) =>
+          Positioned(top: top, left: 0, right: 0, bottom: 0, child: child!),
+    );
+  }
+
+  void _pushTimelineCoordinates(
+    bool isCurrentView, {
+    double? nextIntervalHeight,
+  }) {
     // SF-21: Do not expose a pre-layout scale offset with stale geometry.
     if (_suppressTimelineCoordinatesForScalePreposition) {
       return;
@@ -6869,23 +6968,35 @@ class _CalendarViewState extends State<_CalendarView>
     // viewHeader 的部分计入 pinnedAllDay，否则 host 自绘 12AM ruler 落在原始
     // viewHeader 处、戳进比它高的 all-day 区 (#2148 Day view 续)。
     // Week/3-Day: all-day pinned overlay 走 _resolvePinnedAllDayHeight(展开态真高度)。
-    final double pinnedAllDay = isDayView
-        ? math.max(0.0, _allDayHeight - viewHeaderHeight)
-        : _resolvePinnedAllDayHeight();
+    final double resolvedTop = isDayView
+        ? math.max(viewHeaderHeight, _allDayHeight)
+        : viewHeaderHeight + _resolvePinnedAllDayHeight();
+    // SF-8: layout-phase candidates remain pending; publish committed layout only.
+    _timelineViewportOwner?._updateTimelineViewportTop(this, resolvedTop);
+    final double viewportTopInBody = _effectiveTimelineViewportTop;
+    final double pinnedAllDay = viewportTopInBody - viewHeaderHeight;
     final int columns = math.max(1, widget.visibleDates.length);
-    final double viewportTopInBody = viewHeaderHeight + pinnedAllDay;
     final double viewportWidthPerColumn =
         (widget.width - timeLabelWidth) / columns;
     final SfCalendarTimelineCoordinates coords =
         SfCalendarTimelineCoordinates(
       viewportTopInBody: viewportTopInBody,
       scrollOffset: pos.pixels,
-      intervalHeight: _timeIntervalHeight,
+      intervalHeight: nextIntervalHeight ?? _timeIntervalHeight,
       pinnedAllDayHeight: pinnedAllDay,
       visibleDates: widget.visibleDates,
       viewportWidth: viewportWidthPerColumn,
       viewportHeight: pos.viewportDimension,
-      maxScrollExtent: pos.maxScrollExtent,
+      // SF-21: the prepared scale snapshot uses the next content height;
+      // normal layout/scroll callbacks continue to report measured extents.
+      maxScrollExtent: nextIntervalHeight == null
+          ? pos.maxScrollExtent
+          : math.max(
+              0.0,
+              nextIntervalHeight * _horizontalLinesCount! +
+                  widget.calendar.timeSlotViewSettings.scrollEndPadding -
+                  pos.viewportDimension,
+            ),
     );
 
     // Forward to _SfCalendarState (cross-library): host callback wrapping in
@@ -6899,11 +7010,35 @@ class _CalendarViewState extends State<_CalendarView>
     (sfState as dynamic).dispatchTimelineCoordinatesToHostInternal(coords);
   }
 
+  // SF-21: extent changes do not notify ScrollController when pixels stay
+  // unchanged. Publish the measured layout after the prepared scale snapshot.
+  Widget _observeTimelineMetrics(Widget child) {
+    if (widget.calendar.onTimelineCoordinatesChanged == null) return child;
+    return NotificationListener<ScrollMetricsNotification>(
+      onNotification: (ScrollMetricsNotification notification) {
+        if (notification.depth == 0) {
+          widget.getCalendarState(_updateCalendarStateDetails);
+          _pushTimelineCoordinatesForCurrentView();
+        }
+        return false;
+      },
+      child: child,
+    );
+  }
+
   /// [SF-21] Apply a host-prepositioned scale offset to this timeline page.
   double? setTimelineScrollOffset(
     double targetOffset, {
     required bool allowOutOfRange,
+    required double? nextIntervalHeight,
   }) {
+    // SF-21: an opt-in snapshot is valid only as a pre-layout scale pair.
+    if (nextIntervalHeight != null &&
+        (!allowOutOfRange ||
+            !nextIntervalHeight.isFinite ||
+            nextIntervalHeight <= 0)) {
+      throw ArgumentError.value(nextIntervalHeight, 'nextIntervalHeight');
+    }
     if (!mounted) {
       return null;
     }
@@ -6932,6 +7067,18 @@ class _CalendarViewState extends State<_CalendarView>
     }
     if (allowOutOfRange && (targetOffset - inRangeTarget).abs() >= 0.5) {
       position.correctPixels(targetOffset);
+    }
+    // SF-21: do not wait for the post-frame callback to update a host ruler.
+    // Publish only after both the actual offset and next height are known.
+    if (nextIntervalHeight != null) {
+      final bool isCurrentView = identical(
+        this,
+        _timelineViewportOwner?._getCurrentViewByVisibleDates(),
+      );
+      _pushTimelineCoordinates(
+        isCurrentView,
+        nextIntervalHeight: nextIntervalHeight,
+      );
     }
     return position.pixels;
   }
@@ -6991,7 +7138,12 @@ class _CalendarViewState extends State<_CalendarView>
       widget.calendar.timeSlotViewSettings.timeRulerSize,
       widget.view,
     );
-    return _getDateFromPosition(timeLabelWidth + 1, local.dy, timeLabelWidth);
+    // SF-8: _getDateFromPosition takes viewport-local Y, not body-local Y.
+    final double top = _effectiveTimelineViewportTop;
+    if (local.dy < top || local.dy >= widget.height) {
+      return null;
+    }
+    return _getDateFromPosition(1, local.dy - top, timeLabelWidth);
   }
 
   DateTime? queryDateForGlobalX(double globalX) {
@@ -7027,8 +7179,13 @@ class _CalendarViewState extends State<_CalendarView>
       widget.calendar.timeSlotViewSettings.timeRulerSize,
       widget.view,
     );
+    // SF-8: global pointer, viewport layout, and the external ruler share one top.
+    final double top = _effectiveTimelineViewportTop;
+    if (local.dy < top || local.dy >= widget.height) {
+      return null;
+    }
     final DateTime? time =
-        _getDateFromPosition(local.dx, local.dy, timeLabelWidth);
+        _getDateFromPosition(local.dx, local.dy - top, timeLabelWidth);
     if (time == null) return null;
     final DateTime date = DateTime(time.year, time.month, time.day);
     // Host hit-tests appointments via Syncfusion's own onLongPress / onTap
@@ -7545,13 +7702,15 @@ class _CalendarViewState extends State<_CalendarView>
 
     double maxScrollPosition = 0;
     if (!isTimelineView) {
-      final double scrollViewHeight =
-          widget.height -
-          _allDayHeight -
-          CalendarViewHelper.getViewHeaderHeight(
-            widget.calendar.viewHeaderHeight,
-            widget.view,
-          );
+      // SF-8: date-to-offset clamping uses the same rendered viewport height.
+      final double scrollViewHeight = _timelineViewportOwner != null
+          ? widget.height - _effectiveTimelineViewportTop
+          : widget.height -
+              _allDayHeight -
+              CalendarViewHelper.getViewHeaderHeight(
+                widget.calendar.viewHeaderHeight,
+                widget.view,
+              );
       final double scrollViewContentHeight =
           CalendarViewHelper.getHorizontalLinesCount(
             widget.calendar.timeSlotViewSettings,
@@ -7651,6 +7810,12 @@ class _CalendarViewState extends State<_CalendarView>
         /*Animates the all day panel when it's expanding or
         collapsing*/
       });
+      // SF-8: the lazily-created animation follows the same pre-build contract.
+      if (widget.calendar.onTimelineCoordinatesChanged != null) {
+        _updateAllDayHeight(
+          _updateCalendarStateDetails.currentViewVisibleDates == widget.visibleDates,
+        );
+      }
     });
 
     _expanderAnimationController ??= AnimationController(
@@ -7775,10 +7940,20 @@ class _CalendarViewState extends State<_CalendarView>
       topPosition = _allDayHeight;
     }
 
+    // SF-8: all-day clipping and its divider commit with the timeline viewport.
+    final _CustomCalendarScrollViewState? owner = _timelineViewportOwner;
     if (_allDayHeight == 0 ||
         (!isDayView &&
             widget.visibleDates !=
                 _updateCalendarStateDetails.currentViewVisibleDates)) {
+      if (owner != null) {
+        return ValueListenableBuilder<double>(
+          valueListenable: owner._timelineViewportTop,
+          child: shadowView,
+          builder: (BuildContext context, double top, Widget? child) =>
+              Positioned(left: 0, right: 0, top: top, height: 1, child: child!),
+        );
+      }
       return Positioned(
         left: 0,
         right: 0,
@@ -7814,6 +7989,43 @@ class _CalendarViewState extends State<_CalendarView>
 
     final double allDayExpanderHeight =
         _allDayHeight + (panelHeight * _allDayExpanderAnimation!.value);
+    final Widget content = ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      children: <Widget>[
+        _getAllDayLayout(
+          timeLabelWidth,
+          panelHeight,
+          allDayExpanderHeight,
+          isCurrentView,
+        ),
+      ],
+    );
+    if (owner != null) {
+      // SF-8: keep raw appointment layout cached inside the committed visible band.
+      final double panelTop = topPosition;
+      return ValueListenableBuilder<double>(
+        valueListenable: owner._timelineViewportTop,
+        child: content,
+        builder: (BuildContext context, double top, Widget? child) => Positioned(
+          left: 0,
+          right: 0,
+          top: panelTop,
+          height: math.max(0.0, top - panelTop),
+          child: ClipRect(
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                child!,
+                Positioned(
+                  left: 0, right: 0, bottom: 0, height: 1, child: shadowView,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Positioned(
       left: 0,
       top: topPosition,
@@ -7826,18 +8038,7 @@ class _CalendarViewState extends State<_CalendarView>
             top: 0,
             right: 0,
             height: _isExpanded ? allDayExpanderHeight : _allDayHeight,
-            child: ListView(
-              physics: const NeverScrollableScrollPhysics(),
-              padding: EdgeInsets.zero,
-              children: <Widget>[
-                _getAllDayLayout(
-                  timeLabelWidth,
-                  panelHeight,
-                  allDayExpanderHeight,
-                  isCurrentView,
-                ),
-              ],
-            ),
+            child: content,
           ),
           Positioned(
             left: 0,
@@ -7971,10 +8172,8 @@ class _CalendarViewState extends State<_CalendarView>
         return;
       }
 
-      final double allDayPanelHeight =
-          _isExpanded
-              ? _updateCalendarStateDetails.allDayPanelHeight
-              : _allDayHeight;
+      // SF-8: resize hit, preview, and commit share the rendered origin.
+      final double allDayPanelHeight = _effectiveAllDayHeight(viewHeaderHeight);
 
       yPosition =
           yPosition -
@@ -8075,10 +8274,8 @@ class _CalendarViewState extends State<_CalendarView>
     double yPosition = details.localPosition.dy;
     final bool isForwardResize = _mouseCursor == SystemMouseCursors.resizeDown;
     final bool isBackwardResize = _mouseCursor == SystemMouseCursors.resizeUp;
-    final double allDayPanelHeight =
-        _isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : _allDayHeight;
+    // SF-8: resize hit, preview, and commit share the rendered origin.
+    final double allDayPanelHeight = _effectiveAllDayHeight(viewHeaderHeight);
     if (!CalendarViewHelper.isTimelineView(widget.view) &&
         widget.view != CalendarView.month) {
       _updateMaximumResizingPosition(
@@ -8142,10 +8339,8 @@ class _CalendarViewState extends State<_CalendarView>
               widget.view,
             );
 
-    final double allDayPanelHeight =
-        _isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : _allDayHeight;
+    // SF-8: resize hit, preview, and commit share the rendered origin.
+    final double allDayPanelHeight = _effectiveAllDayHeight(viewHeaderHeight);
 
     final double currentYPosition =
         _resizingDetails.value.position.value!.dy > widget.height - 1
@@ -10209,10 +10404,8 @@ class _CalendarViewState extends State<_CalendarView>
               widget.calendar.viewHeaderHeight,
               widget.view,
             );
-    final double allDayPanelHeight =
-        _isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : _allDayHeight;
+    // SF-8: resize shadows follow the committed viewport during height handoff.
+    final double allDayPanelHeight = _effectiveAllDayHeight(viewHeaderHeight);
     final bool isVerticalResize =
         _mouseCursor == SystemMouseCursors.resizeUp ||
         _mouseCursor == SystemMouseCursors.resizeDown;
@@ -10381,17 +10574,10 @@ class _CalendarViewState extends State<_CalendarView>
             ),
           ),
         ),
-        Positioned(
-          top:
-              isDayView
-                  ? viewHeaderHeight + allDayExpanderHeight
-                  : viewHeaderHeight + _allDayHeight + allDayExpanderHeight,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: ScrollConfiguration(
+        _positionTimelineViewport(
+          ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-            child: ListView(
+            child: _observeTimelineMetrics(ListView(
               padding: EdgeInsets.zero,
               controller: _scrollController,
               physics: const ClampingScrollPhysics(),
@@ -10474,8 +10660,11 @@ class _CalendarViewState extends State<_CalendarView>
                             ),
                   ),
               ],
-            ),
+            )),
           ),
+          isDayView
+              ? viewHeaderHeight + allDayExpanderHeight
+              : viewHeaderHeight + _allDayHeight + allDayExpanderHeight,
         ),
       ],
     );
@@ -11426,10 +11615,8 @@ class _CalendarViewState extends State<_CalendarView>
               widget.calendar.viewHeaderHeight,
               widget.view,
             );
-    final double allDayHeight =
-        _isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : _allDayHeight;
+    // SF-8: keep tap/long-press classification aligned with the rendered viewport.
+    final double allDayHeight = _effectiveAllDayHeight(viewHeaderHeight);
     // time ruler position on time slot scroll view.
     if (!_isRTL &&
         xDetails <= timeLabelWidth &&
@@ -11751,10 +11938,8 @@ class _CalendarViewState extends State<_CalendarView>
               widget.calendar.viewHeaderHeight,
               widget.view,
             );
-    final double allDayHeight =
-        _isExpanded
-            ? _updateCalendarStateDetails.allDayPanelHeight
-            : _allDayHeight;
+    // SF-8: keep tap/long-press classification aligned with the rendered viewport.
+    final double allDayHeight = _effectiveAllDayHeight(viewHeaderHeight);
     if (!_isRTL &&
         xDetails <= timeLabelWidth &&
         yDetails > viewHeaderHeight + allDayHeight) {
@@ -12936,7 +13121,10 @@ class _CalendarViewState extends State<_CalendarView>
     /// use the value instead of adding of view header height and all day
     /// height.
     if (isDayView) {
-      if (allDayHeight > viewHeaderHeight) {
+      // SF-8: classify the day header before hover's early-return branches.
+      if (_timelineViewportOwner != null) {
+        viewHeaderHeight = _effectiveTimelineViewportTop;
+      } else if (allDayHeight > viewHeaderHeight) {
         viewHeaderHeight = allDayHeight;
       }
 
@@ -12998,8 +13186,10 @@ class _CalendarViewState extends State<_CalendarView>
 
       final double allDayExpanderHeight =
           panelHeight * _allDayExpanderAnimation!.value;
-      final double allDayBottom =
-          isDayView
+      // SF-8: hover uses the committed viewport boundary during handoff.
+      final double allDayBottom = _timelineViewportOwner != null
+          ? _effectiveTimelineViewportTop
+          : isDayView
               ? viewHeaderHeight
               : viewHeaderHeight + _allDayHeight + allDayExpanderHeight;
       if (localPosition.dy > viewHeaderHeight &&
@@ -13029,7 +13219,11 @@ class _CalendarViewState extends State<_CalendarView>
         return;
       }
 
-      yPosition = localPosition.dy - (viewHeaderHeight + allDayHeight);
+      // SF-8: hit-test against the origin that actually positioned appointments.
+      yPosition = localPosition.dy -
+          (_timelineViewportOwner != null
+              ? _effectiveTimelineViewportTop
+              : viewHeaderHeight + allDayHeight);
 
       final AppointmentView? appointment = _appointmentLayout
           .getAppointmentViewOnPoint(

@@ -2,6 +2,11 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.26 — shared paging and scale coordinates (#3949)
+
+- SF-8: commit one timeline origin for visible Day/3-Day/Week pages and the host ruler; use that origin for pointer, resize and scroll-clamp conversions while preserving the callback-null layout path.
+- SF-21: optional `nextIntervalHeight` publishes the prepared scale height and applied offset together before layout, keeping a host ruler aligned in the first scaled frame; the prepared snapshot follows the arriving page during paging, and measured scroll extents replace the prediction after layout. Omitted arguments retain the existing deferred snapshot behavior.
+
 ## v33.2.8+nestify.25 — SF-18 sparse rows in dense clusters (#3461)
 
 - SF-18: keep three-card rows side by side when a dense sibling promotes their connected cluster; retain dense overlays, timestamps and the default lane-fill path. Shared by Phone and Pad; covered by `test/sf18_sparse_branch_test.dart`.
