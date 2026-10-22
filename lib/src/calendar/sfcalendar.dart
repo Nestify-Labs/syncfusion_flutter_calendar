@@ -2870,6 +2870,9 @@ class _SfCalendarState extends State<SfCalendar>
         SingleTickerProviderStateMixin,
         SfCalendarTimelineQueryApi,
         SfCalendarScheduleScrollApi {
+  // SF-22: a replacement may share the controller before the old state disposes.
+  bool _calendarStateActive = true;
+
   late List<DateTime> _currentViewVisibleDates;
   late DateTime _currentDate;
   DateTime? _selectedDate;
@@ -4187,6 +4190,23 @@ class _SfCalendarState extends State<SfCalendar>
     return null;
   }
 
+  // SF-22: retire synchronous controller events and queued host coordinates
+  // while this calendar is outside the active tree, including keyed replacement.
+  @override
+  void deactivate() {
+    _calendarStateActive = false;
+    if (widget.dayWindowNavigation == DayWindowNavigation.continuous) {
+      _timelineCoordinatesDispatchGeneration++;
+    }
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _calendarStateActive = true;
+  }
+
   @override
   void dispose() {
     _dispatchScheduleScrollApiToHostInternal(null);
@@ -4854,6 +4874,11 @@ class _SfCalendarState extends State<SfCalendar>
   }
 
   void _calendarValueChangedListener(String property) {
+    // SF-22: mounted stays true between deactivate and dispose.
+    if (!_calendarStateActive &&
+        widget.dayWindowNavigation == DayWindowNavigation.continuous) {
+      return;
+    }
     _removeDatePicker();
     if (property == 'selectedDate') {
       if (CalendarViewHelper.isSameTimeSlot(

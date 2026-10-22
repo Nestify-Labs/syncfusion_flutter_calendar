@@ -420,7 +420,10 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     final bool dayWindowLockChanged = oldWidget.calendar.viewNavigationMode != widget.calendar.viewNavigationMode;
     DateTime? resizedDayWindowAnchor;
     if ((wasContinuous || _usesContinuousDayWindow) && dayWindowGeometryChanged) {
+      // SF-22: explicit weekday/controller changes own the new date anchor.
       if (wasContinuous && oldWidget.view == widget.view &&
+          oldWidget.controller == widget.controller &&
+          oldWidget.calendar.firstDayOfWeek == widget.calendar.firstDayOfWeek &&
           oldWidget.calendar.timeSlotViewSettings.numberOfDaysInView == widget.calendar.timeSlotViewSettings.numberOfDaysInView) {
         final double oldColumn = math.max(1.0, oldWidget.width - CalendarViewHelper.getTimeLabelWidth(
             oldWidget.calendar.timeSlotViewSettings.timeRulerSize, oldWidget.view)) / _currentViewVisibleDates.length;

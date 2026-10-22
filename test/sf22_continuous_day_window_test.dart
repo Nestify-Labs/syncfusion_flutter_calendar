@@ -112,6 +112,34 @@ void main() {
         _checkVisibleEvents(tester, h);
       },
     );
+    testWidgets(
+      '$days-day explicit navigation with weekday reconfiguration wins',
+      (tester) async {
+        final h = await _mount(tester, days);
+        final target = DateTime(2026, 10, 22);
+        h.rebuild(() => h.firstDayOfWeek = target.weekday);
+        h.controller.displayDate = target;
+        await tester.pumpAndSettle();
+        expect(h.coords!.dayWindow!.settledFirstDate, target);
+        expect(h.windows.last.first, target);
+        _checkVisibleEvents(tester, h);
+      },
+    );
+    testWidgets(
+      '$days-day replacement sharing a controller retires the old listener',
+      (tester) async {
+        final h = await _mount(tester, days);
+        h.rebuild(() {
+          h.key = GlobalKey<SfCalendarTimelineQueryApi>();
+        });
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(h.coords!.dayWindow!.settledFirstDate, DateTime(2026, 10, 19));
+        h.controller.displayDate = DateTime(2026, 11, 9);
+        await tester.pumpAndSettle();
+        expect(h.coords!.dayWindow!.settledFirstDate, DateTime(2026, 11, 9));
+      },
+    );
     testWidgets('$days-day explicit navigation invalidates active fling', (
       tester,
     ) async {
@@ -764,7 +792,7 @@ class _Source extends CalendarDataSource {
 class _Harness {
   _Harness(this.days);
   final int days;
-  final key = GlobalKey<SfCalendarTimelineQueryApi>();
+  var key = GlobalKey<SfCalendarTimelineQueryApi>();
   final rasterKey = GlobalKey();
   final controller = CalendarController();
   final windows = <List<DateTime>>[];
@@ -781,6 +809,7 @@ class _Harness {
   bool rtl = false;
   DateTime? minDate, maxDate;
   double intervalHeight = 60;
+  int firstDayOfWeek = 1;
   SfCalendarTimelineCoordinates? coords;
   double get column => 378 / days;
 }
@@ -841,7 +870,7 @@ Future<_Harness> _mount(
                   view:
                       h.view ??
                       (days == 3 ? CalendarView.day : CalendarView.week),
-                  firstDayOfWeek: 1,
+                  firstDayOfWeek: h.firstDayOfWeek,
                   initialDisplayDate: DateTime(2026, 10, 19, 9),
                   headerHeight: 0,
                   viewHeaderHeight: 50,
