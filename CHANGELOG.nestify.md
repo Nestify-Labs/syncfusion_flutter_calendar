@@ -2,6 +2,10 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.27 — continuous day-window spike (#4066, unreleased)
+
+- SF-22: opt-in 3/7-day continuous browsing with bounded date blocks, day snapping, atomic horizontal coordinates, shared all-day/vertical geometry, and transformed native drag hit testing; default paging is unchanged. Includes a standalone preview and clipped semantics for buffered date blocks. Host integration and native acceptance are pending; no release tag has been created.
+
 ## v33.2.8+nestify.26 — shared paging and scale coordinates (#3949)
 
 - SF-8: commit one timeline origin for visible Day/3-Day/Week pages and the host ruler; use that origin for pointer, resize and scroll-clamp conversions while preserving the callback-null layout path.

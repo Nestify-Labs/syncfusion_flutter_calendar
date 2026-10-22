@@ -963,6 +963,10 @@ class CalendarViewHelper {
 /// Args to get and update the required properties from calendar state to it's
 /// children's
 class UpdateCalendarStateDetails {
+  // SF-22: render during navigation, then commit one stable business window.
+  bool transientDayWindow = false;
+  bool commitDayWindow = false;
+
   /// Holds the current display date of calendar.
   DateTime? currentDate;
 

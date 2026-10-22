@@ -7,7 +7,7 @@ This repository is a Nestify-Labs fork of [`syncfusion_flutter_calendar`](https:
 | Branch | Contents |
 |---|---|
 | `upstream/<major>.<minor>.x` (e.g. `upstream/32.1.x`) | Pristine mirror of the pub.dev package for that upstream version. Byte-identical to the upstream tarball. Never carries Nestify patches. |
-| `main` | Default development branch. Based on the latest `upstream/<major>.<minor>.x` plus the Nestify patches listed below (SF-1 … SF-21). Excludes upstream `example/`, `screenshots/`, and `*.iml`. |
+| `main` | Default development branch. Based on the latest `upstream/<major>.<minor>.x` plus the Nestify patches listed below (SF-1 … SF-22). Excludes upstream `example/`, `screenshots/`, and `*.iml`. |
 
 | Tag pattern | Meaning |
 |---|---|
@@ -63,10 +63,53 @@ The consumer (`Nestify` mono-repo) pins to a `v<...>+nestify.<n>` tag via a `git
 | SF-19 | `lib/src/calendar/sfcalendar.dart` | **(Nestify #2278.)** Make appointment-collection post-frame refreshes lifecycle-safe. `CalendarDataSource.notifyListeners` can queue `_updateVisibleAppointmentCollection` and the host can replace the `SfCalendar` before the frame ends; the old State is then disposed while its queued callback still runs. Both Schedule and non-Schedule branches now share `_scheduleVisibleAppointmentCollectionRefresh`, which checks `mounted` immediately before `setState`. Widget regression coverage: `test/sf19_post_frame_dispose_test.dart`. | Live calendars rebuild exactly as before. Only a queued refresh owned by an already-disposed State is discarded instead of raising `setState() called after dispose`. No public API or host configuration changes. |
 | SF-20 | `lib/src/calendar/common/event_args.dart` + `lib/src/calendar/appointment_layout/appointment_layout.dart` | **(Nestify #2797.)** Add `CalendarAppointmentDetails.isOverlapping` so a custom `appointmentBuilder` can consume the finalized day / week / workweek lane-allocation result. The flag is derived from the rendered occurrence's `AppointmentView.maxPositions`, so recurring occurrences, minimum-duration collisions, and transitive collision groups stay aligned with the component's actual layout instead of requiring the host to reconstruct overlap from master event data. Widget regression coverage: `test/sf20_appointment_overlap_details_test.dart`. | The optional constructor field defaults to `false`; Month, Schedule, Timeline, all-day, more-region, and non-overlapping builder calls report `false`. Layout geometry, paint order, and hit testing are unchanged. Existing callers that do not read the field behave identically. |
 | SF-21 | `lib/src/calendar/sfcalendar.dart` + `lib/src/calendar/views/calendar_view.dart` | **(Nestify #3112 phone follow-up.)** Add `SfCalendar.preserveTimelineScaleOffset` and `SfCalendarTimelineQueryApi.setTimelineScrollOffset`. The stable GlobalKey command always targets the current visible page; with `allowOutOfRange: true`, it can preposition a next-layout offset beyond the old extent. A host calls it before publishing a new `timeIntervalHeight`, sets the preservation flag for that rebuild, then calls it again after layout for boundary correction. The existing viewport-top `_retainScrolledDateTime` path is skipped so it cannot overwrite the focal-point anchor. **v33.2.8+nestify.23:** the pre-layout command suppresses its intermediate `onTimelineCoordinatesChanged` snapshot, and rebuild-time publications adopt the incoming interval height before notifying the host. Together these prevent hosts from observing a new scroll offset paired with the previous interval height; the paired post-layout snapshot remains authoritative. **v33.2.8+nestify.26 (#3949):** callers may pass a positive, finite `nextIntervalHeight` with `allowOutOfRange: true` outside build/layout, then synchronously configure the same height with preservation enabled. After prepositioning, SF-21 publishes the applied offset, next height and predicted content extent together so an external ruler renders the first scaled frame correctly; the next layout replaces the prediction with measured geometry through depth-zero scroll metrics notifications. Prepared commands select the page by its visible dates during the paging completion animation and recheck its ownership before publishing, so the departing page cannot overwrite the incoming snapshot. Omitting the argument preserves the existing deferred publication contract. This matches the device-verified Pad transaction without storing mutable closures in coordinate snapshots or guessing among Syncfusion's three mounted page positions. Widget coverage: `test/sf21_timeline_scale_anchor_test.dart`. | Default `false` keeps `_retainScrolledDateTime`, ordinary scroll coordinate callbacks, and all upstream scroll-position behavior unchanged. The command mutates only the current visible detail timeline and returns `null` after that view unmounts; callers that do not invoke it are unaffected. |
+| SF-22 | `lib/src/calendar/sfcalendar.dart`, `common/{enums,calendar_view_helper,day_window_snapshot}.dart`, `views/{calendar_view,continuous_day_window,day_window_scroll_layout,day_window_appointments}.dart` | **(Nestify #4066; native spike, unreleased.)** Add opt-in `DayWindowNavigation.continuous` for day(3)/week(7): three bounded reusable date blocks, fixed ruler, fractional drag, multi-day fling and day snapping. `SfCalendarTimelineCoordinates.dayWindow` carries immutable horizontal geometry. Header, timed/all-day blocks, hit queries and native long-press drag share transformed dates; all-day lanes/expansion and vertical offsets are shared across blocks. Data notifications invalidate buffered appointments; generation guards stop superseded motion. `test/sf22_continuous_day_window_test.dart` covers behavior, raster output and existing SF-7/8/21 contracts; `tool/day_window_spike.dart` provides an isolated native preview with `test/sf22_preview_test.dart` control/semantics coverage. | Default `paged` and unsupported view/count combinations retain existing navigation and viewport geometry, including callback-null single-day all-day rows. Snapshots are null on the legacy path; `ViewNavigationMode.none` locks browsing. Controller arrows retain full-window strides. Phone/Pad production callers and the consumer dependency remain unchanged until integration and native acceptance. |
 
 (Historical note: an early SF-8 exploration tried using the bare `_allDayHeight` as the timeline-base-Y offset and found it insufficient — `_allDayHeight` is the collapsed-capped value (≤60) used by Syncfusion's drag-math and does not reflect the expanded all-day overlay. The shipped SF-8 (above) instead exposes coordinates through the `onTimelineCoordinatesChanged` callback. #2148 closed the remaining gap: `_pushTimelineCoordinates` now reports the live expanded overlay height via `_resolvePinnedAllDayHeight()` instead of the bare capped `_allDayHeight`, and fires on the all-day expander animation so the host ruler tracks expand/collapse.)
 
 SF-8 #3949 coverage: `test/sf8_swipe_viewport_test.dart` compares actual rendered grids and an external ruler during Day / 3-Day / Week swipes, reversal, cancellation and all-day height changes. `test/sf8_pointer_origin_test.dart` covers desktop resize and interval rebuilds with an expanded all-day panel. Existing SF-8 dispatch-order and SF-21 scaling tests remain required. Phone and Pad both opt in and explicitly set `timeIntervalHeight`; automatic interval height (`-1`) is not covered by this patch's acceptance. The pre-existing empty-slot query X/RTL boundary behavior is unchanged and requires separate coverage.
+
+### SF-22 continuous-window contract (unreleased)
+
+- Enable explicitly with `dayWindowNavigation: DayWindowNavigation.continuous` on `CalendarView.day` with 3 days, or `CalendarView.week` with the default/7 days. Other views/counts retain paging. `ViewNavigationMode.none` cancels motion and settles to a legal day boundary.
+- `dayWindow.renderedDates` is a chronological buffer of exactly 3 visible windows; it is **not** the stable business range. `xForDate(date)` gives the date-column left edge in calendar-body coordinates, including the fixed ruler and RTL transform. Hosts clip external rows to the date viewport and use this frame for every overlay. `onViewChanged` commits only at settlement; transient buffer changes must use coordinate snapshots for prefetch.
+- `generation` invalidates interrupted/reconfigured motion; `sequence` orders horizontal frames. Explicit controller navigation wins immediately. Resizing, bounds, view/count, direction and timeline settings cancel old motion. Source refreshes preserve the fractional position.
+- Motion constants for the spike: Flutter `FrictionSimulation(0.135)`, fling threshold 300 logical px/s, velocity cap 8000 px/s, projected travel capped at 3 visible windows; critically damped spring (`mass=1`, `stiffness=180`, damping ratio `1.05`, tolerance `.01 px/.1 px/s`). These are test parameters, **not device-validated performance or feel claims**.
+- Three page states and three block appointment projections stay bounded. All-day lanes are assigned across the shared buffer before clipping into blocks; the current block owns expansion, and all date blocks share vertical scroll. Cached projections are explicitly invalidated for add/remove/reset notifications, including dates outside the stable business range. Only painted date blocks participate in semantics, using the same clip as raster output and pointer queries.
+- Scope still awaiting host/native acceptance: Mobile/Pad prefetch and external rows, real-device gesture arbitration, frame-time/memory measurements, accessibility, and desktop all-day horizontal resize across a block seam. Native `allowAppointmentResize` is false in the intended Mobile/Pad callers; that optional desktop path is not an accepted capability of this spike. Do not tag or enable production based only on widget tests.
+
+
+### SF-22 standalone native preview
+
+`tool/day_window_spike.dart` uses local mock appointments only. It provides 3/7-day switching, full-window arrows, Today, an interval-height slider and live all-day additions. It does not access Nestify accounts or services. The preview control test runs in this package with `fvm flutter test --no-pub test/sf22_preview_test.dart`.
+
+To prepare an isolated Android wrapper (from this fork root; choose a new empty destination):
+
+```bash
+FORK_ROOT="$(pwd)"
+PREVIEW_ROOT=/tmp/calendar-day-window-spike
+fvm flutter create --no-pub --platforms=android \
+  --org=dev.nestify --project-name=calendar_day_window_spike "$PREVIEW_ROOT"
+cp tool/day_window_spike.dart "$PREVIEW_ROOT/lib/main.dart"
+cat > "$PREVIEW_ROOT/pubspec.yaml" <<YAML
+name: calendar_day_window_spike
+publish_to: none
+environment:
+  sdk: ^3.12.0
+dependencies:
+  flutter:
+    sdk: flutter
+  syncfusion_flutter_calendar:
+    path: "$FORK_ROOT"
+flutter:
+  uses-material-design: true
+YAML
+cd "$PREVIEW_ROOT"
+fvm flutter pub get
+```
+
+Application ID: `dev.nestify.calendar_day_window_spike`, separate from both Nestify apps. After the consumer project's device checks and build authorization, run `fvm flutter run --profile -d <verified-device-serial>`. Re-copy the Dart entry point after preview-source changes. Do not register this tool as a package runtime asset. Widget tests and static analysis do not establish native feel, frame-time or memory acceptance.
+
 
 ## Position To Time Paths
 

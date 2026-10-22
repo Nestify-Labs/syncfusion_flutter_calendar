@@ -271,3 +271,12 @@ enum AppointmentType {
   /// occurrence appointment in the recurrence series.
   pattern,
 }
+
+// SF-22: an opt-in day-sized navigation policy; existing callers remain paged.
+/// Horizontal navigation policy for multi-day detail views.
+enum DayWindowNavigation {
+  /// Navigate by a complete visible page (the default).
+  paged,
+  /// Continuously drag and snap by natural days in 3-day and week views.
+  continuous,
+}

@@ -23,6 +23,7 @@ import 'appointment_layout/agenda_view_layout.dart';
 import 'common/calendar_controller.dart';
 import 'common/calendar_view_helper.dart';
 import 'common/date_time_engine.dart';
+import 'common/day_window_snapshot.dart'; // SF-22: horizontal coordinate frame.
 import 'common/enums.dart';
 import 'common/event_args.dart';
 import 'resource_view/calendar_resource.dart';
@@ -211,6 +212,8 @@ class SfCalendar extends StatefulWidget {
     this.onScheduleScrollApiReady,
     this.cellEndPadding = -1,
     this.viewNavigationMode = ViewNavigationMode.snap,
+    // SF-22: opt-in continuous multi-day browsing.
+    this.dayWindowNavigation = DayWindowNavigation.paged,
     this.allowedViews,
     this.specialRegions,
     this.loadMoreWidgetBuilder,
@@ -1303,6 +1306,11 @@ class SfCalendar extends StatefulWidget {
   ///
   /// ```
   final ViewNavigationMode viewNavigationMode;
+
+  // SF-22: other views ignore this policy; navigation none remains the lock.
+  /// Day-sized continuous browsing for day(3) and week(7) views.
+  /// Defaults to [DayWindowNavigation.paged], preserving full-page navigation.
+  final DayWindowNavigation dayWindowNavigation;
 
   /// The settings have properties which allow to customize the time slot views
   /// of the [SfCalendar].
@@ -4921,6 +4929,14 @@ class _SfCalendarState extends State<SfCalendar>
   }
 
   void _updateDisplayDate() {
+    // SF-22: explicit controller navigation owns the window immediately.
+    final Widget? scrollView = _customScrollViewKey.currentWidget;
+    if (_canScrollTimeSlotView && scrollView is CustomCalendarScrollView &&
+        scrollView.navigateContinuousDayWindow()) {
+      setState(() {});
+      return;
+    }
+
     if (!isSameOrAfterDate(widget.minDate, _controller.displayDate)) {
       _controller.displayDate = widget.minDate;
       return;
@@ -5178,6 +5194,11 @@ class _SfCalendarState extends State<SfCalendar>
           }
         }
         break;
+    }
+    // SF-22: also refresh exposed buffered dates when the stable page is unchanged.
+    final Widget? scrollView = _customScrollViewKey.currentWidget;
+    if (scrollView is CustomCalendarScrollView) {
+      scrollView.invalidateContinuousAppointments();
     }
   }
 
@@ -10348,7 +10369,8 @@ class _SfCalendarState extends State<SfCalendar>
   }
 
   void _updateCalendarState(UpdateCalendarStateDetails details) {
-    if (details.currentDate != null &&
+    // SF-22: transient layout dates must not move the business controller.
+    if (!details.transientDayWindow && details.currentDate != null &&
         !isSameDate(details.currentDate, _currentDate)) {
       _currentDate = DateTimeHelper.getDateTimeValue(
         getValidDate(widget.minDate, widget.maxDate, details.currentDate),
@@ -10359,14 +10381,19 @@ class _SfCalendarState extends State<SfCalendar>
       details.currentDate = _currentDate;
     }
 
-    if (_currentViewVisibleDates != details.currentViewVisibleDates) {
+    final bool windowChanged = _currentViewVisibleDates != details.currentViewVisibleDates;
+    if (windowChanged) {
       _currentViewVisibleDates = details.currentViewVisibleDates;
       _allDayAppointmentViewCollection = <AppointmentView>[];
       _visibleAppointments = <CalendarAppointment>[];
       _allDayPanelHeight = 0;
       _isNeedLoadMore = widget.loadMoreWidgetBuilder != null;
       _updateVisibleAppointments();
-      if (CalendarViewHelper.shouldRaiseViewChangedCallback(
+    }
+
+    // SF-22: publish once after settling, even when the rendered dates are unchanged.
+    if (windowChanged || details.commitDayWindow) {
+      if (!details.transientDayWindow && CalendarViewHelper.shouldRaiseViewChangedCallback(
         widget.onViewChanged,
       )) {
         final bool showTrailingLeadingDates =
@@ -13458,7 +13485,12 @@ class SfCalendarTimelineCoordinates {
     required this.viewportWidth,
     required this.viewportHeight,
     required this.maxScrollExtent,
+    // SF-22: absent for every legacy paging caller.
+    this.dayWindow,
   });
+
+  // SF-22: atomic horizontal geometry, paired with this vertical frame.
+  final DayWindowSnapshot? dayWindow;
 
   /// timeline content viewport Y-start inside the SfCalendar body.
   /// Equals `viewHeaderHeight + pinnedAllDayHeight` (Week / 3-Day) or
@@ -13501,6 +13533,11 @@ class SfCalendarTimelineCoordinates {
     double tol = 0.5,
   }) {
     if (other == null) return false;
+    // SF-22: horizontal motion is observable even when vertical values are unchanged.
+    if (dayWindow == null ? other.dayWindow != null :
+        !dayWindow!.equalsWithTolerance(other.dayWindow, tol: tol)) {
+          return false;
+        }
     if ((viewportTopInBody - other.viewportTopInBody).abs() > tol) return false;
     if ((scrollOffset - other.scrollOffset).abs() > tol) return false;
     if ((intervalHeight - other.intervalHeight).abs() > tol) return false;
