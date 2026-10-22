@@ -2,6 +2,10 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.27 — SF-18 collision width sharing (#4139; local candidate, unreleased)
+
+- SF-18: reserve a base lane for same-start rows only within fully concurrent clusters; adapt narrow fully concurrent groups to equal-width cards with at most 50% horizontal occlusion, in actual paint order. Historical connected-chain geometry, sparse-to-dense overlays (#3461), lane recycling (#2859), timestamps and the default lane-fill path are retained. Phone and Pad share the actual column-width calculation; very narrow columns do not guarantee readable titles. Local path validation only; no tag published.
+
 ## v33.2.8+nestify.26 — shared paging and scale coordinates (#3949)
 
 - SF-8: commit one timeline origin for visible Day/3-Day/Week pages and the host ruler; use that origin for pointer, resize and scroll-clamp conversions while preserving the callback-null layout path.

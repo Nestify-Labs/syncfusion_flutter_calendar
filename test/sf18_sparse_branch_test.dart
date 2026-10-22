@@ -177,6 +177,12 @@ void main() {
         for (int i = 0; i < early.length - 1; i++) {
           expect(early[i].right, lessThanOrEqualTo(early[i + 1].left + 1e-6));
         }
+        final Rect denseRow = view('Standup').appointmentRect!.outerRect;
+        final List<Rect> denseLeaves = <String>['Meeting A', 'Meeting B']
+            .map((String subject) => view(subject).appointmentRect!.outerRect)
+            .toList();
+        expect(denseLeaves.any(denseRow.overlaps), isTrue,
+            reason: 'A later dense row retains its historical overlay');
         for (final String subject in <String>[
           'Go to',
           'Hiking todo',

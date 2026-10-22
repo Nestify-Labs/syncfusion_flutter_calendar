@@ -826,6 +826,7 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
     // below falls through to the byte-identical SF-6 lane path with no overhead.
     final Map<AppointmentView, CascadeBox> cascadeBoxes = _buildCascadeBoxes(
       count,
+      cellWidth - cellEndPadding,
     );
     _activeCascadeViews = cascadeBoxes.keys.toSet();
 
@@ -875,12 +876,9 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
         // z-batch overlay geometry. Mutually exclusive with SF-6 lane
         // extension, so it deliberately skips _computeDayAppointmentLaneExtent.
         final double content = cellWidth - cellEndPadding;
-        // OQ-3 (SF-18) T6 定案：不做像素级可读性 floor。container 恰为一个
-        // branch unit 宽、同批成员并排相接、row 与每批末位成员顶到日列内容
-        // 右缘，因此任何把宽度抬到天然值之上的 floor 必然破坏形状不变式：
-        // 并排成员互相压盖、或越界渗入下一日列（周视图实测：container 压
-        // row 11.4px、末位 leaf 越列界 8.4px）。窄列保留天然细条宽度——与
-        // Google Calendar 周视图行为一致。
+        // SF-18 (#4139): the resolver adapts the entire narrow collision
+        // group within [0, 1]. Never widen individual rects here: a pixel
+        // floor at this point can cover peers or spill into the next day.
         appointmentWidth = cascadeBox.widthFraction * content;
         if (widget.isRTL) {
           final double mirroredLeft =
@@ -1012,7 +1010,10 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
   /// Returns an empty (cheap, unscanned) map unless the calendar opted into
   /// [AppointmentOverlapMode.cascade]; the laneFill path then stays
   /// byte-identical to SF-6.
-  Map<AppointmentView, CascadeBox> _buildCascadeBoxes(int count) {
+  Map<AppointmentView, CascadeBox> _buildCascadeBoxes(
+    int count,
+    double contentWidth,
+  ) {
     if (widget.calendar.appointmentOverlapMode !=
         AppointmentOverlapMode.cascade) {
       return const <AppointmentView, CascadeBox>{};
@@ -1054,6 +1055,7 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
     final List<CascadeBox?> boxes = CascadeLayout.resolve(
       widget.calendar.appointmentOverlapMode,
       items,
+      contentWidth: contentWidth,
     );
     final Map<AppointmentView, CascadeBox> result =
         <AppointmentView, CascadeBox>{};
@@ -3653,13 +3655,13 @@ class CascadeBox {
 /// promotes the connected cluster to cascade. Rows without leaves retain
 /// their base unit; the container and dense-row geometry stay unchanged.
 ///
-/// The exact offset step has no industry standard and is tuned on-device
-/// against Google Calendar in T6 (OQ-3); only the *shape* (the invariants
-/// above) is fixed here. A pixel readability floor was evaluated in T6 and
-/// rejected: the container is exactly one unit wide, batch members sit flush
-/// against each other, and each batch's last member ends at the column right
-/// edge — so any active floor breaks the shape invariants
-/// (details at the consumer in `_updateDayAppointmentDetails`).
+/// SF-18 (#4139): the historical tree above remains the wide-column and
+/// non-clique layout. In a narrow column, a fully concurrent group instead
+/// shares equal-width overlapping cards in paint order. This trades some
+/// horizontal exposure for wider headers while retaining at least half of
+/// every card. It does not promise readable titles in arbitrarily narrow
+/// columns, especially for identical intervals. No per-rect width floor is
+/// applied: the whole group is fitted inside the day column.
 class CascadeLayout {
   CascadeLayout._();
 
@@ -3674,6 +3676,10 @@ class CascadeLayout {
   /// 列宽的 0.10）。
   /// Smaller = tighter overlap over the row beneath, larger = more separation.
   static const double kCascadeOffsetFactor = 0.4;
+
+  // SF-18 (#4139): a target for card geometry, not a guaranteed text or touch
+  // minimum. The 50% occlusion cap wins when the column cannot fit this width.
+  static const double _preferredCardWidth = 64;
 
   /// Mirrors the `_updateDayAppointmentDetails` entry filter: a timed,
   /// single-day, non-spanned appointment that is visible in [column].
@@ -3745,10 +3751,13 @@ class CascadeLayout {
   /// Resolves the per-item cascade box, or `null` when the item should keep the
   /// SF-6 laneFill geometry (non-cascade [mode], or a cluster below
   /// [kCascadeMinColumns]). The returned list is index-aligned with [items].
+  /// [contentWidth] is the day-column content width in logical pixels; omitted
+  /// or invalid values retain historical geometry. Items must be in paint order.
   static List<CascadeBox?> resolve(
     AppointmentOverlapMode mode,
-    List<CascadeItem> items,
-  ) {
+    List<CascadeItem> items, {
+    double? contentWidth,
+  }) {
     final List<CascadeBox?> result = List<CascadeBox?>.filled(
       items.length,
       null,
@@ -3767,9 +3776,63 @@ class CascadeLayout {
           maxPositions < kCascadeMinColumns) {
         continue;
       }
-      _assignClusterBoxes(items, cluster, result);
+      // SF-18 (#4139): only a fully concurrent group can be safely fanned in
+      // paint order. Connected chains keep their existing lane recycling.
+      final bool fullyConcurrent = _isFullyConcurrent(items, cluster);
+      if (!fullyConcurrent ||
+          !_assignNarrowClique(items, cluster, contentWidth, result)) {
+        _assignClusterBoxes(items, cluster, result, fullyConcurrent);
+      }
     }
     return result;
+  }
+
+  // SF-18 (#4139): apply fair same-start lanes only to a fully concurrent
+  // cluster. Sparse-to-dense chains retain the #3461 / #2859 overlay geometry.
+  static bool _isFullyConcurrent(List<CascadeItem> items, List<int> cluster) {
+    for (int i = 0; i < cluster.length; i++) {
+      final CascadeItem a = items[cluster[i]];
+      for (int j = i + 1; j < cluster.length; j++) {
+        final CascadeItem b = items[cluster[j]];
+        if (!_cascadeOverlaps(a.start, a.effectiveEnd, b.start, b.effectiveEnd)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // SF-18 (#4139): assign equal cards in the input's actual paint order. Do
+  // not sort by end time here: Phone and Pad may paint same-start peers in
+  // different orders. Matching that order keeps every exposed strip on top
+  // and lets both existing hit-test paths use the same reverse traversal.
+  static bool _assignNarrowClique(
+    List<CascadeItem> items,
+    List<int> cluster,
+    double? contentWidth,
+    List<CascadeBox?> out,
+  ) {
+    final int count = cluster.length;
+    if (contentWidth == null ||
+        !contentWidth.isFinite ||
+        contentWidth <= 0 ||
+        contentWidth / count >= _preferredCardWidth) {
+      return false;
+    }
+    // n cards of width w and stride s fill the column: w + (n-1)s = 1.
+    // Requiring s >= w/2 bounds occlusion to 50%, hence w <= 2/(n+1).
+    final double width = math.min(
+      _preferredCardWidth / contentWidth,
+      2 / (count + 1),
+    );
+    final double stride = (1 - width) / (count - 1);
+    for (int i = 0; i < count; i++) {
+      out[cluster[i]] = CascadeBox(
+        leftFraction: i * stride,
+        widthFraction: width,
+      );
+    }
+    return true;
   }
 
   /// Partitions [items] into clusters of transitively overlapping appointments
@@ -3821,6 +3884,7 @@ class CascadeLayout {
     List<CascadeItem> items,
     List<int> cluster,
     List<CascadeBox?> out,
+    bool fullyConcurrent,
   ) {
     final List<_CascadeNode> nodes =
         cluster
@@ -3871,7 +3935,7 @@ class CascadeLayout {
     }
 
     for (final _CascadeNode c in containers) {
-      _allocateSubtree(c, 0, 1, out);
+      _allocateSubtree(c, 0, 1, out, fullyConcurrent);
     }
   }
 
@@ -3883,6 +3947,7 @@ class CascadeLayout {
     double lo,
     double hi,
     List<CascadeBox?> out,
+    bool fullyConcurrent,
   ) {
     final double w = hi - lo;
     final List<_CascadeNode> rows = container.rows ?? const <_CascadeNode>[];
@@ -3940,7 +4005,11 @@ class CascadeLayout {
         }
         continue;
       }
-      double layerLeft = branchLo + step;
+      // SF-18 (#4139): reserve the same-start base lane only inside a
+      // fully concurrent cluster; connected chains keep their old overlay.
+      final bool sharesRowStart = fullyConcurrent &&
+          CalendarViewHelper.isSameTimeSlot(r.start, leaves.first.start);
+      double layerLeft = branchLo + (sharesRowStart ? unit : step);
       if (layerLeft > maxLeft) {
         layerLeft = maxLeft;
       }
