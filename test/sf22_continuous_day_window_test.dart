@@ -71,7 +71,8 @@ void main() {
         final drag = await tester.startGesture(const Offset(350, 400));
         await drag.moveBy(const Offset(-20, 0));
         await tester.pump();
-        await drag.moveBy(Offset(-h.column * 1.2, 0));
+        final insideBlockDistance = h.column * (days - .2);
+        await drag.moveBy(Offset(-insideBlockDistance, 0));
         await tester.pump(const Duration(milliseconds: 300));
         expect(
           h.appointmentBuilds,
@@ -80,7 +81,7 @@ void main() {
         );
         _checkVisibleEvents(tester, h);
 
-        await drag.moveBy(Offset(-h.column * days, 0));
+        await drag.moveBy(Offset(-h.column * .4, 0));
         await tester.pump(const Duration(milliseconds: 300));
         expect(
           h.appointmentBuilds,
