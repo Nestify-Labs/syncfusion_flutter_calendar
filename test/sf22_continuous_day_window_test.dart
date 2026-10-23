@@ -62,23 +62,38 @@ void main() {
     );
   }
 
-  testWidgets('7-day held drag reuses its mounted date blocks', (tester) async {
-    final h = await _mount(tester, 7);
-    final initialBuilds = h.appointmentBuilds;
-    final drag = await tester.startGesture(const Offset(350, 400));
-    await drag.moveBy(const Offset(-20, 0));
-    await tester.pump();
-    await drag.moveBy(Offset(-h.column * 1.2, 0));
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(
-      h.appointmentBuilds,
-      initialBuilds,
-      reason: 'A partial block shift must translate retained date children',
+  for (final days in [3, 7]) {
+    testWidgets(
+      '$days-day held drag reuses date blocks until a full block boundary',
+      (tester) async {
+        final h = await _mount(tester, days);
+        final initialBuilds = h.appointmentBuilds;
+        final drag = await tester.startGesture(const Offset(350, 400));
+        await drag.moveBy(const Offset(-20, 0));
+        await tester.pump();
+        await drag.moveBy(Offset(-h.column * 1.2, 0));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(
+          h.appointmentBuilds,
+          initialBuilds,
+          reason: 'A partial block shift must translate retained date children',
+        );
+        _checkVisibleEvents(tester, h);
+
+        await drag.moveBy(Offset(-h.column * days, 0));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(
+          h.appointmentBuilds,
+          greaterThan(initialBuilds),
+          reason: 'Crossing a full block must mount the next retained block',
+        );
+        _checkVisibleEvents(tester, h);
+        await drag.cancel();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
     );
-    _checkVisibleEvents(tester, h);
-    await drag.cancel();
-    await tester.pumpAndSettle();
-  });
+  }
   for (final days in [3, 7]) {
     testWidgets('$days-day held drag crosses old pages with accurate hit dates', (
       tester,
