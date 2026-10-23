@@ -61,6 +61,24 @@ void main() {
       },
     );
   }
+
+  testWidgets('7-day held drag reuses its mounted date blocks', (tester) async {
+    final h = await _mount(tester, 7);
+    final initialBuilds = h.appointmentBuilds;
+    final drag = await tester.startGesture(const Offset(350, 400));
+    await drag.moveBy(const Offset(-20, 0));
+    await tester.pump();
+    await drag.moveBy(Offset(-h.column * 1.2, 0));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      h.appointmentBuilds,
+      initialBuilds,
+      reason: 'A partial block shift must translate retained date children',
+    );
+    _checkVisibleEvents(tester, h);
+    await drag.cancel();
+    await tester.pumpAndSettle();
+  });
   for (final days in [3, 7]) {
     testWidgets('$days-day held drag crosses old pages with accurate hit dates', (
       tester,
@@ -811,6 +829,7 @@ class _Harness {
   double intervalHeight = 60;
   int firstDayOfWeek = 1;
   SfCalendarTimelineCoordinates? coords;
+  int appointmentBuilds = 0;
   double get column => 378 / days;
 }
 
@@ -879,18 +898,19 @@ Future<_Harness> _mount(
                   preserveTimelineScaleOffset: true,
                   allDayPanelChronologicalSort: true,
                   dataSource: h.data,
-                  appointmentBuilder:
-                      (context, details) => ColoredBox(
-                        key:
-                            details.appointments.length == 1
-                                ? ValueKey<String>(
-                                  (details.appointments.single as Appointment)
-                                          .id!
-                                      as String,
-                                )
-                                : null,
-                        color: Colors.blue,
-                      ),
+                  appointmentBuilder: (context, details) {
+                    h.appointmentBuilds++;
+                    return ColoredBox(
+                      key:
+                          details.appointments.length == 1
+                              ? ValueKey<String>(
+                                (details.appointments.single as Appointment).id!
+                                    as String,
+                              )
+                              : null,
+                      color: Colors.blue,
+                    );
+                  },
                   onViewChanged: (value) => h.windows.add(value.visibleDates),
                   onTimelineCoordinatesChanged:
                       captureCoordinates ? (value) => h.coords = value : null,

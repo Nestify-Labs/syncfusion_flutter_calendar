@@ -271,9 +271,14 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
     final double oldPanelHeight = _dayWindowPanelHeight;
     _dayWindowTravel = _boundedDayTravel(value);
     final double relative = _dayWindowTravel - _dayWindowBaseTravel;
-    final int days = (-relative / _dayColumnWidth * _dayDirection).truncate();
-    if (days != 0) {
-      _dayWindowBaseTravel -= days * _dayColumnWidth * _dayDirection;
+    // SF-22: retain all three mounted date blocks while travel remains inside
+    // their prepared range. Replacing seven-day children at every crossed day
+    // made a single gesture rebuild the appointment layouts several times.
+    final int blocks =
+        (-relative / _dayWindowStride * _dayDirection).truncate();
+    if (blocks != 0) {
+      final int days = blocks * _currentViewVisibleDates.length;
+      _dayWindowBaseTravel -= blocks * _dayWindowStride * _dayDirection;
       _setDayWindowDates(_dayDate(_currentViewVisibleDates.first, days));
     }
     _position = _dayWindowTravel - _dayWindowBaseTravel;
@@ -331,7 +336,18 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
   }
 
   void _commitDayWindow() {
+    final double oldPanelHeight = _dayWindowPanelHeight;
+    final int remaining =
+        (-_position / _dayColumnWidth * _dayDirection).round();
+    if (remaining != 0) {
+      _setDayWindowDates(_dayDate(_currentViewVisibleDates.first, remaining));
+    }
     _position = 0;
+    if (oldPanelHeight != _dayWindowPanelHeight) {
+      _children.clear();
+      _currentViewKey.currentState?._readPageCalendarState();
+      _currentViewKey.currentState?._updateAllDayHeight(true);
+    }
     _dayWindowPhase = DayWindowPhase.idle;
     _settledDayWindowFirst = _currentViewVisibleDates.first;
     _publishDayWindowCoordinates();
@@ -418,15 +434,8 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
           if (!mounted || generation != _dayWindowGeneration) {
             return;
           }
-          // Avoid floating-point values just below a day failing to rebase.
+          // Avoid floating-point values just below a day failing to settle.
           _applyDayWindowTravel(destination);
-          final int remaining =
-              (-_position / _dayColumnWidth * _dayDirection).round();
-          if (remaining != 0) {
-            _setDayWindowDates(
-              _dayDate(_currentViewVisibleDates.first, remaining),
-            );
-          }
           _commitDayWindow();
         });
   }
