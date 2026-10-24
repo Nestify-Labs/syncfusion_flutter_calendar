@@ -8,13 +8,28 @@ class _DayWindowAppointments {
     SfCalendar calendar, {
     _DayWindowAppointments? sharedLayout,
   }) {
-    visible = AppointmentHelper.getVisibleAppointments(
-      dates.first,
-      dates.last,
-      appointments,
-      calendar.timeZone,
-      false,
-    );
+    // SF-22: the shared buffer already expanded recurrence and split overnight
+    // events. Re-project those instances without repeating either operation.
+    if (sharedLayout == null) {
+      visible = AppointmentHelper.getVisibleAppointments(
+        dates.first,
+        dates.last,
+        appointments,
+        calendar.timeZone,
+        false,
+      );
+    } else {
+      final DateTime start = AppointmentHelper.convertToStartTime(dates.first);
+      final DateTime end = AppointmentHelper.convertToEndTime(dates.last);
+      visible =
+          sharedLayout.visible.where((CalendarAppointment appointment) {
+            return AppointmentHelper.isAppointmentWithinVisibleDateRange(
+              appointment,
+              start,
+              end,
+            );
+          }).toList();
+    }
     for (final CalendarAppointment appointment in visible) {
       if (!appointment.isAllDay &&
           AppointmentHelper.getDifference(

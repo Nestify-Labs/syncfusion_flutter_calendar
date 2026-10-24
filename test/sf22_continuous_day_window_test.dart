@@ -3,10 +3,152 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:syncfusion_flutter_calendar/calendar.dart';
+import 'package:syncfusion_flutter_calendar/src/calendar/appointment_engine/appointment_helper.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/appointment_layout/allday_appointment_layout.dart';
+import 'package:syncfusion_flutter_calendar/src/calendar/appointment_layout/appointment_layout.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_helper.dart';
 
 void main() {
+  // SF-22: one buffer expansion must preserve each block's independent projection.
+  for (final days in [3, 7]) {
+    testWidgets(
+      '$days-day buffered recurrence projection is equivalent and shared',
+      (tester) async {
+        final h = await _mount(
+          tester,
+          days,
+          timeZone: 'Eastern Standard Time',
+          displayDate: DateTime(2026, 10, 31, 9),
+        );
+        h.data.appointments = [
+          Appointment(
+            id: 'recurring-span',
+            startTime: DateTime(2026, 10, 1),
+            endTime: DateTime(2026, 10, 5),
+            isAllDay: true,
+            recurrenceRule: 'FREQ=WEEKLY;BYDAY=TH;COUNT=12',
+            recurrenceExceptionDates: [DateTime.utc(2026, 10, 22, 12)],
+          ),
+          Appointment(
+            id: 'overnight',
+            startTime: DateTime(2026, 10, 1, 23, 15),
+            endTime: DateTime(2026, 10, 2, 1, 15),
+            startTimeZone: 'Eastern Standard Time',
+            endTimeZone: 'Eastern Standard Time',
+            recurrenceRule: 'FREQ=DAILY;COUNT=60',
+            recurrenceExceptionDates: [DateTime.utc(2026, 11, 1, 12)],
+          ),
+          Appointment(
+            id: 'midnight',
+            startTime: DateTime(2026, 10, 1, 22),
+            endTime: DateTime(2026, 10, 2),
+            startTimeZone: 'Eastern Standard Time',
+            endTimeZone: 'Eastern Standard Time',
+            recurrenceRule: 'FREQ=DAILY;UNTIL=20261104T000000Z',
+          ),
+          Appointment(
+            id: 'zoned',
+            startTime: DateTime(2026, 10, 1, 14),
+            endTime: DateTime(2026, 10, 1, 15),
+            startTimeZone: 'UTC',
+            endTimeZone: 'UTC',
+            recurrenceRule: 'FREQ=DAILY',
+          ),
+          Appointment(
+            id: 'long-timed',
+            startTime: DateTime(2026, 10, 28, 10),
+            endTime: DateTime(2026, 10, 29, 12),
+            recurrenceRule: 'FREQ=DAILY;COUNT=12',
+          ),
+        ];
+        h.data.notifyListeners(
+          CalendarDataSourceAction.reset,
+          h.data.appointments!,
+        );
+        await tester.pumpAndSettle();
+
+        List<Object?> signature(CalendarAppointment a) => [
+          a.id,
+          a.recurrenceId,
+          a.subject,
+          a.startTime,
+          a.endTime,
+          a.actualStartTime,
+          a.actualEndTime,
+          a.exactStartTime,
+          a.exactEndTime,
+          a.isAllDay,
+          a.isSpanned,
+          a.notes,
+        ];
+        void check() {
+          final layouts =
+              tester
+                  .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+                  .toList();
+          expect(layouts, hasLength(3));
+          final seen = <(Object?, DateTime, DateTime), CalendarAppointment>{};
+          var sharedCount = 0;
+          for (final layout in layouts) {
+            final expected = AppointmentHelper.getVisibleAppointments(
+              layout.visibleDates.first,
+              layout.visibleDates.last,
+              AppointmentHelper.generateCalendarAppointments(
+                h.data,
+                h.timeZone,
+              ),
+              h.timeZone,
+              false,
+            );
+            final actual = layout.visibleAppointments.value!;
+            expect(
+              actual.map(signature).toList(),
+              expected.map(signature).toList(),
+            );
+            expect(
+              actual.where(
+                (a) =>
+                    a.id == 'overnight' &&
+                    a.exactStartTime.month == 11 &&
+                    a.exactStartTime.day == 1,
+              ),
+              isEmpty,
+              reason: 'The excluded overnight occurrence stays absent',
+            );
+            for (final a in actual) {
+              final key = (a.id, a.actualStartTime, a.actualEndTime);
+              final previous = seen[key];
+              if (previous != null) {
+                sharedCount++;
+                expect(
+                  identical(a, previous),
+                  isTrue,
+                  reason:
+                      'The same buffered occurrence must not be expanded twice',
+                );
+              }
+              seen[key] = a;
+            }
+          }
+          expect(sharedCount, greaterThan(0));
+        }
+
+        check();
+        (h.data.appointments!.first as Appointment).subject = 'Updated span';
+        h.data.notifyListeners(
+          CalendarDataSourceAction.reset,
+          h.data.appointments!,
+        );
+        await tester.pumpAndSettle();
+        check();
+        h.controller.forward!();
+        await tester.pumpAndSettle();
+        check();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final days in [3, 7]) {
     testWidgets(
       '$days-day slow drag snaps one day, preserving vertical offset',
@@ -60,6 +202,78 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+  }
+
+  // SF-22: movement alone must not rebuild unchanged adjacent layouts.
+  for (final days in [3, 7]) {
+    for (final direction in [-1, 1]) {
+      testWidgets('$days-day adjacent layouts survive held travel $direction', (
+        tester,
+      ) async {
+        final h = await _mount(tester, days);
+        List<AppointmentLayout> layouts() =>
+            tester
+                .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+                .toList();
+        final before = layouts();
+        expect(before, hasLength(3));
+        final drag = await tester.startGesture(const Offset(210, 400));
+        await drag.moveBy(Offset(direction * 20, 0));
+        await tester.pump();
+        await drag.moveBy(Offset(direction * h.column * .6, 0));
+        await tester.pump(const Duration(milliseconds: 300));
+        final after = layouts();
+        for (var i = 0; i < before.length; i++) {
+          expect(
+            identical(after[i], before[i]),
+            isTrue,
+            reason: 'Unchanged block $i must retain its appointment layout',
+          );
+        }
+        _checkVisibleEvents(tester, h);
+        await drag.cancel();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  // SF-22: retain steady-state layouts without suppressing timezone readiness.
+  for (final days in [3, 7]) {
+    testWidgets('$days-day timezone readiness refreshes all retained blocks', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      final loaded = timeZoneLoaded;
+      addTearDown(() => timeZoneLoaded = loaded);
+      List<AppointmentLayout> layouts() =>
+          tester
+              .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+              .toList();
+      final before = layouts();
+      final drag = await tester.startGesture(const Offset(210, 400));
+      await drag.moveBy(const Offset(-20, 0));
+      await tester.pump();
+      timeZoneLoaded = !loaded;
+      await drag.moveBy(Offset(-h.column * .1, 0));
+      await tester.pump();
+      final changed = layouts();
+      expect(changed, hasLength(3));
+      for (var i = 0; i < before.length; i++) {
+        expect(identical(changed[i], before[i]), isFalse);
+      }
+      timeZoneLoaded = loaded;
+      await drag.moveBy(Offset(-h.column * .1, 0));
+      await tester.pump();
+      final ready = layouts();
+      for (var i = 0; i < changed.length; i++) {
+        expect(identical(ready[i], changed[i]), isFalse);
+      }
+      _checkVisibleEvents(tester, h);
+      await drag.cancel();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
   }
 
   for (final days in [3, 7]) {
@@ -839,6 +1053,7 @@ class _Harness {
   ViewNavigationMode navigation = ViewNavigationMode.snap;
   DayWindowNavigation policy = DayWindowNavigation.continuous;
   CalendarView? view;
+  String? timeZone;
   Color background = Colors.white;
   bool rtl = false;
   DateTime? minDate, maxDate;
@@ -857,6 +1072,8 @@ Future<_Harness> _mount(
   bool allDay = false,
   bool captureCoordinates = true,
   bool allowDrag = false,
+  String? timeZone,
+  DateTime? displayDate,
   DayWindowNavigation policy = DayWindowNavigation.continuous,
 }) async {
   tester.view.physicalSize = const Size(420, 850);
@@ -865,6 +1082,7 @@ Future<_Harness> _mount(
   addTearDown(tester.view.resetDevicePixelRatio);
   final h =
       _Harness(days)
+        ..timeZone = timeZone
         ..rtl = rtl
         ..policy = policy;
   if (bounded) {
@@ -906,7 +1124,7 @@ Future<_Harness> _mount(
                       h.view ??
                       (days == 3 ? CalendarView.day : CalendarView.week),
                   firstDayOfWeek: h.firstDayOfWeek,
-                  initialDisplayDate: DateTime(2026, 10, 19, 9),
+                  initialDisplayDate: displayDate ?? DateTime(2026, 10, 19, 9),
                   headerHeight: 0,
                   viewHeaderHeight: 50,
                   showCurrentTimeIndicator: false,
@@ -914,6 +1132,7 @@ Future<_Harness> _mount(
                   preserveTimelineScaleOffset: true,
                   allDayPanelChronologicalSort: true,
                   dataSource: h.data,
+                  timeZone: h.timeZone,
                   appointmentBuilder: (context, details) {
                     h.appointmentBuilds++;
                     return ColoredBox(

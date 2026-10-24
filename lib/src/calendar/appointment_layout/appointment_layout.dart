@@ -3756,7 +3756,13 @@ class CascadeLayout {
     if (mode != AppointmentOverlapMode.cascade || items.isEmpty) {
       return result;
     }
-    for (final List<int> cluster in _clusterIndices(items)) {
+    // SF-22: normalize each timestamp once per layout, not once per pair.
+    // Identity keys preserve the wall-clock fields of equal UTC/local instants.
+    final Map<DateTime, DateTime> minuteFloors =
+        Map<DateTime, DateTime>.identity();
+    DateTime minuteFloor(DateTime date) =>
+        minuteFloors.putIfAbsent(date, () => _floorToMinute(date));
+    for (final List<int> cluster in _clusterIndices(items, minuteFloor)) {
       int maxPositions = 1;
       for (final int idx in cluster) {
         if (items[idx].maxPositions > maxPositions) {
@@ -3767,7 +3773,7 @@ class CascadeLayout {
           maxPositions < kCascadeMinColumns) {
         continue;
       }
-      _assignClusterBoxes(items, cluster, result);
+      _assignClusterBoxes(items, cluster, result, minuteFloor);
     }
     return result;
   }
@@ -3776,7 +3782,10 @@ class CascadeLayout {
   /// (union-find over [_cascadeOverlaps]). O(n²), matching the existing
   /// `_computeDayAppointmentLaneExtent` scan; n is the per-view appointment
   /// count, which is small.
-  static List<List<int>> _clusterIndices(List<CascadeItem> items) {
+  static List<List<int>> _clusterIndices(
+    List<CascadeItem> items,
+    DateTime Function(DateTime) minuteFloor,
+  ) {
     final int n = items.length;
     final List<int> parent = List<int>.generate(n, (int i) => i);
     int find(int x) {
@@ -3802,6 +3811,7 @@ class CascadeLayout {
           items[i].effectiveEnd,
           items[j].start,
           items[j].effectiveEnd,
+          minuteFloor,
         )) {
           union(i, j);
         }
@@ -3821,6 +3831,7 @@ class CascadeLayout {
     List<CascadeItem> items,
     List<int> cluster,
     List<CascadeBox?> out,
+    DateTime Function(DateTime) minuteFloor,
   ) {
     final List<_CascadeNode> nodes =
         cluster
@@ -3837,7 +3848,13 @@ class CascadeLayout {
     for (final _CascadeNode node in nodes) {
       _CascadeNode? container;
       for (final _CascadeNode c in containers) {
-        if (_cascadeOverlaps(c.start, c.end, node.start, node.end)) {
+        if (_cascadeOverlaps(
+          c.start,
+          c.end,
+          node.start,
+          node.end,
+          minuteFloor,
+        )) {
           container = c;
           break;
         }
@@ -3856,6 +3873,7 @@ class CascadeLayout {
           candidate.end,
           node.start,
           node.end,
+          minuteFloor,
         )) {
           row = candidate;
           break;
@@ -4072,15 +4090,16 @@ class CascadeLayout {
     DateTime aEnd,
     DateTime bStart,
     DateTime bEnd,
+    DateTime Function(DateTime) minuteFloor,
   ) {
     if (CalendarViewHelper.isSameTimeSlot(aStart, bStart) ||
         CalendarViewHelper.isSameTimeSlot(aEnd, bEnd)) {
       return true;
     }
-    final DateTime a0 = _floorToMinute(aStart);
-    final DateTime a1 = _floorToMinute(aEnd);
-    final DateTime b0 = _floorToMinute(bStart);
-    final DateTime b1 = _floorToMinute(bEnd);
+    final DateTime a0 = minuteFloor(aStart);
+    final DateTime a1 = minuteFloor(aEnd);
+    final DateTime b0 = minuteFloor(bStart);
+    final DateTime b1 = minuteFloor(bEnd);
     return a0.isBefore(b1) && b0.isBefore(a1);
   }
 

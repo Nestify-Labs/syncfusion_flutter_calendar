@@ -298,6 +298,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   final Map<DateTime, _DayWindowAppointments> _dayWindowAppointmentCache = <DateTime, _DayWindowAppointments>{};
   List<CalendarAppointment>? _dayWindowAppointmentSource;
   bool _dayWindowSyncingVertical = false;
+  // SF-22: timezone readiness invalidates retained blocks once, not every tick.
+  bool? _dayWindowTimeZoneLoaded;
   Offset? _dayWindowAppointmentPointer;
   bool _dayWindowDragRefreshPending = false;
 
@@ -3696,6 +3698,14 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   }
 
   List<Widget> _addViews() {
+    // SF-22: retain layouts after timezone initialization, while refreshing
+    // every block when readiness changes (including a new calendar instance).
+    if (_usesContinuousDayWindow &&
+        _dayWindowTimeZoneLoaded != timeZoneLoaded) {
+      _dayWindowTimeZoneLoaded = timeZoneLoaded;
+      _dayWindowAppointmentCache.clear();
+      _children.clear();
+    }
     if (_children.isEmpty) {
       _previousView = _CalendarView(
         widget.calendar,
@@ -3892,7 +3902,12 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     // check and update the visible appointments in the view
     else if (!CalendarViewHelper.isCollectionEqual(
       appointmentLayout.visibleAppointments.value,
-      _updateCalendarStateDetails.visibleAppointments,
+      // SF-22: compare each retained block with its own projection. Comparing
+      // adjacent dates with the central window rebuilds unchanged layouts
+      // on every animation tick. Source changes still invalidate the cache.
+      _usesContinuousDayWindow
+          ? _dayWindowAppointments(visibleDates).visible
+          : _updateCalendarStateDetails.visibleAppointments,
     )) {
       if (widget.view != CalendarView.month &&
           !CalendarViewHelper.isTimelineView(widget.view)) {
@@ -4035,7 +4050,10 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       );
 
       _children[index] = view;
-    } else if (timeZoneLoaded || widget.calendar.timeZone != '') {
+      // SF-22: continuous readiness changes are handled once in _addViews;
+      // timezone/configuration edits already replace the calendar above.
+    } else if (!_usesContinuousDayWindow &&
+        (timeZoneLoaded || widget.calendar.timeZone != '')) {
       view = _CalendarView(
         widget.calendar,
         widget.view,
