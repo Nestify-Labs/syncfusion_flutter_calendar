@@ -245,18 +245,103 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
   }
 
   void _setDayWindowDates(DateTime first) {
-    _dayWindowAppointmentCache.clear();
     final int count = _currentViewVisibleDates.length;
-    List<DateTime> dates(int offset) => List<DateTime>.generate(
-      count,
-      (int i) => _dayDate(first, offset + i),
-      growable: false,
-    );
+    final List<List<DateTime>> oldDates = <List<DateTime>>[
+      _previousViewVisibleDates,
+      _currentViewVisibleDates,
+      _nextViewVisibleDates,
+    ];
+    List<DateTime> dates(int offset) {
+      final DateTime start = _dayDate(first, offset);
+      for (final List<DateTime> retained in oldDates) {
+        if (retained.length == count && retained.first == start) {
+          return retained;
+        }
+      }
+      return List<DateTime>.generate(
+        count,
+        (int i) => _dayDate(start, i),
+        growable: false,
+      );
+    }
+
+    final List<List<DateTime>> nextDates = <List<DateTime>>[
+      dates(widget.isRTL ? count : -count),
+      dates(0),
+      dates(widget.isRTL ? -count : count),
+    ];
+    // SF-22: move the mounted date blocks with their keys, recycling only the
+    // departing block. Replacing all three dates discards two valid layouts.
+    if (_children.isNotEmpty) {
+      final List<_CalendarView> views = <_CalendarView>[
+        _previousView,
+        _currentView,
+        _nextView,
+      ];
+      final List<GlobalKey<_CalendarViewState>> keys =
+          <GlobalKey<_CalendarViewState>>[
+            _previousViewKey,
+            _currentViewKey,
+            _nextViewKey,
+          ];
+      final List<int> order =
+          nextDates
+              .map(
+                (List<DateTime> dates) => views.indexWhere(
+                  (_CalendarView view) => identical(view.visibleDates, dates),
+                ),
+              )
+              .toList();
+      final List<int> unused = <int>[
+        for (int i = 0; i < 3; i++)
+          if (!order.contains(i)) i,
+      ];
+      for (int i = 0; i < 3; i++) {
+        if (order[i] == -1) {
+          order[i] = unused.removeAt(0);
+        }
+      }
+      // SF-22: expansion belongs to the window, not to the date block that
+      // happened to own it. Transfer its in-flight progress before key rotation.
+      final _CalendarViewState? previous = _currentViewKey.currentState;
+      final _CalendarViewState? current = keys[order[1]].currentState;
+      if (previous != null &&
+          current != null &&
+          !identical(previous, current)) {
+        final AnimationController? expansion =
+            previous._expanderAnimationController;
+        final AnimationController? incoming =
+            current._expanderAnimationController;
+        current._isExpanded = previous._isExpanded;
+        if (expansion != null && incoming != null) {
+          final bool animating = expansion.isAnimating;
+          expansion.stop();
+          if (incoming.value != expansion.value) {
+            incoming.value = expansion.value;
+          }
+          if (animating) {
+            if (current._isExpanded) {
+              incoming.forward();
+            } else {
+              incoming.reverse();
+            }
+          }
+        }
+      }
+      _previousView = views[order[0]];
+      _currentView = views[order[1]];
+      _nextView = views[order[2]];
+      _previousViewKey = keys[order[0]];
+      _currentViewKey = keys[order[1]];
+      _nextViewKey = keys[order[2]];
+      _children
+        ..clear()
+        ..addAll(<_CalendarView>[_previousView, _currentView, _nextView]);
+    }
     _currentChildIndex = 1;
-    _visibleDates = dates(0);
-    _currentViewVisibleDates = _visibleDates;
-    _previousViewVisibleDates = dates(widget.isRTL ? count : -count);
-    _nextViewVisibleDates = dates(widget.isRTL ? -count : count);
+    _previousViewVisibleDates = nextDates[0];
+    _visibleDates = _currentViewVisibleDates = nextDates[1];
+    _nextViewVisibleDates = nextDates[2];
     widget.getCalendarState(_updateCalendarStateDetails);
     _updateCalendarStateDetails.currentViewVisibleDates = _visibleDates;
     _updateCalendarStateDetails.transientDayWindow = true;

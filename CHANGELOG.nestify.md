@@ -4,6 +4,12 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.27 — continuous day-window spike (#4066, unreleased)
 
+- SF-22: retain the complete explicit date/time anchor during continuous navigation so same-day recurring-event refreshes restore the reading position instead of midnight. Stop delayed scroll callbacks when their page has been disposed during refresh or exit.
+
+- SF-22: refresh only changed sources and affected continuous blocks for add/remove notifications; preserve shared all-day geometry and value-equal forced builder refreshes, with full invalidation on reset.
+
+- SF-22: rotate unchanged continuous date blocks with their mounted state, expand only entering dates, refresh changed all-day lanes, and transfer the shared panel's expansion progress when its current block changes.
+
 - SF-22: expand recurrence once per continuous three-block buffer and project its instances into each block; independent departing-block and default paged behavior remain unchanged.
 
 - SF-22/SF-18: reuse minute-normalized timestamps within one cascade layout pass; overlap, ordering, and default lane-fill rules remain unchanged.

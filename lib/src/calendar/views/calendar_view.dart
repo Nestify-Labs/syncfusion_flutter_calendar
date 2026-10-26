@@ -182,15 +182,28 @@ class CustomCalendarScrollView extends StatefulWidget {
   }
 
   // SF-22: add/remove mutate the source list in place, including buffered dates.
-  void invalidateContinuousAppointments() {
+  void invalidateContinuousAppointments(CalendarDataSourceAction action, List<dynamic> data) {
     final State<StatefulWidget>? state = (key as GlobalKey?)?.currentState;
     if (state is! _CustomCalendarScrollViewState || !state._usesContinuousDayWindow) {
       return;
     }
-    state._dayWindowAppointmentCache.clear();
-    state._children.clear();
-    state._currentViewKey.currentState?._readPageCalendarState();
-    state._currentViewKey.currentState?._updateAllDayHeight(true);
+    // SF-22: retain unaffected blocks on deltas; reset/configuration changes
+    // still discard every projection, including value-equal forced refreshes.
+    if (action == CalendarDataSourceAction.add || action == CalendarDataSourceAction.remove) {
+      final double oldPanelHeight = state._dayWindowPanelHeight;
+      state._dayWindowAppointments(state._currentViewVisibleDates, changedData: data);
+      // SF-22: a shared viewport-height change affects all three blocks.
+      if (oldPanelHeight != state._dayWindowPanelHeight) {
+        state._children.clear();
+        state._currentViewKey.currentState?._readPageCalendarState();
+        state._currentViewKey.currentState?._updateAllDayHeight(true);
+      }
+    } else {
+      state._dayWindowAppointmentCache.clear();
+      state._children.clear();
+      state._currentViewKey.currentState?._readPageCalendarState();
+      state._currentViewKey.currentState?._updateAllDayHeight(true);
+    }
     state._rebuildDayWindow();
   }
 
@@ -326,7 +339,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
   /// keys maintained to access the data and methods from the calendar view
   /// class.
-  final GlobalKey<_CalendarViewState> _previousViewKey =
+  // SF-22: keys rotate with retained date blocks in continuous mode.
+  GlobalKey<_CalendarViewState> _previousViewKey =
           GlobalKey<_CalendarViewState>(),
       _currentViewKey = GlobalKey<_CalendarViewState>(),
       _nextViewKey = GlobalKey<_CalendarViewState>();
@@ -3900,15 +3914,12 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       _children[index] = view;
     }
     // check and update the visible appointments in the view
-    else if (!CalendarViewHelper.isCollectionEqual(
-      appointmentLayout.visibleAppointments.value,
-      // SF-22: compare each retained block with its own projection. Comparing
-      // adjacent dates with the central window rebuilds unchanged layouts
-      // on every animation tick. Source changes still invalidate the cache.
-      _usesContinuousDayWindow
-          ? _dayWindowAppointments(visibleDates).visible
-          : _updateCalendarStateDetails.visibleAppointments,
-    )) {
+    else if (_usesContinuousDayWindow
+        ? !identical(viewKey.currentState!._dayWindowModel,
+            _dayWindowAppointments(visibleDates))
+        : !CalendarViewHelper.isCollectionEqual(
+            appointmentLayout.visibleAppointments.value,
+            _updateCalendarStateDetails.visibleAppointments)) {
       if (widget.view != CalendarView.month &&
           !CalendarViewHelper.isTimelineView(widget.view)) {
         view = _CalendarView(
@@ -6883,6 +6894,9 @@ class _CalendarViewState extends State<_CalendarView>
   // SF-22: adjacent blocks need their own all-day views and hit collection.
   bool get _continuousDayBlock => _timelineViewportOwner?._usesContinuousDayWindow ?? false;
 
+  // SF-22: model identity includes all-day lane changes, not only events.
+  _DayWindowAppointments? _dayWindowModel;
+
   void _readPageCalendarState() {
     widget.getCalendarState(_updateCalendarStateDetails);
     final _CustomCalendarScrollViewState? owner = _timelineViewportOwner;
@@ -6890,6 +6904,7 @@ class _CalendarViewState extends State<_CalendarView>
       return;
     }
     final _DayWindowAppointments model = owner!._dayWindowAppointments(widget.visibleDates);
+    _dayWindowModel = model;
     _updateCalendarStateDetails.visibleAppointments = model.visible;
     _updateCalendarStateDetails.allDayAppointmentViewCollection = model.views;
     _updateCalendarStateDetails.allDayPanelHeight = owner._dayWindowPanelHeight;
@@ -7810,7 +7825,8 @@ class _CalendarViewState extends State<_CalendarView>
 
   void _scrollToPosition() {
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (widget.view == CalendarView.month) {
+      // SF-22: navigation may outlive its page during host refresh or exit.
+      if (!mounted || widget.view == CalendarView.month) {
         return;
       }
 

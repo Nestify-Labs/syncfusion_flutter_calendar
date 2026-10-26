@@ -4958,6 +4958,8 @@ class _SfCalendarState extends State<SfCalendar>
     final Widget? scrollView = _customScrollViewKey.currentWidget;
     if (_canScrollTimeSlotView && scrollView is CustomCalendarScrollView &&
         scrollView.navigateContinuousDayWindow()) {
+      // SF-22: retain the full explicit anchor before queued scrolling reads it.
+      _currentDate = _controller.displayDate!;
       setState(() {});
       return;
     }
@@ -5223,7 +5225,7 @@ class _SfCalendarState extends State<SfCalendar>
     // SF-22: also refresh exposed buffered dates when the stable page is unchanged.
     final Widget? scrollView = _customScrollViewKey.currentWidget;
     if (scrollView is CustomCalendarScrollView) {
-      scrollView.invalidateContinuousAppointments();
+      scrollView.invalidateContinuousAppointments(type, data);
     }
   }
 

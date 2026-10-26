@@ -7,10 +7,13 @@ class _DayWindowAppointments {
     List<CalendarAppointment> appointments,
     SfCalendar calendar, {
     _DayWindowAppointments? sharedLayout,
+    List<CalendarAppointment>? expandedAppointments,
   }) {
     // SF-22: the shared buffer already expanded recurrence and split overnight
     // events. Re-project those instances without repeating either operation.
-    if (sharedLayout == null) {
+    if (expandedAppointments != null) {
+      visible = expandedAppointments;
+    } else if (sharedLayout == null) {
       visible = AppointmentHelper.getVisibleAppointments(
         dates.first,
         dates.last,
@@ -125,12 +128,33 @@ class _DayWindowAppointments {
       }
     }
   }
+  // SF-22: a new neighbor can change all-day lanes without changing events.
+  bool hasSameLayout(_DayWindowAppointments other) {
+    if (!CalendarViewHelper.isCollectionEqual(visible, other.visible) ||
+        views.length != other.views.length)
+      return false;
+    for (int i = 0; i < views.length; i++) {
+      final AppointmentView a = views[i], b = other.views[i];
+      if (!identical(a.appointment, b.appointment) ||
+          a.startIndex != b.startIndex ||
+          a.endIndex != b.endIndex ||
+          a.position != b.position ||
+          a.maxPositions != b.maxPositions) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   late final List<CalendarAppointment> visible;
   final List<AppointmentView> views = <AppointmentView>[];
 }
 
 extension _DayWindowData on _CustomCalendarScrollViewState {
-  _DayWindowAppointments _dayWindowAppointments(List<DateTime> dates) {
+  _DayWindowAppointments _dayWindowAppointments(
+    List<DateTime> dates, {
+    List<dynamic>? changedData,
+  }) {
     widget.getCalendarState(_updateCalendarStateDetails);
     final List<CalendarAppointment> appointments =
         _updateCalendarStateDetails.appointments;
@@ -138,35 +162,160 @@ extension _DayWindowData on _CustomCalendarScrollViewState {
       _dayWindowAppointmentSource = appointments;
       _dayWindowAppointmentCache.clear();
     }
-    if (!_dayWindowAppointmentCache.containsKey(
-      _currentViewVisibleDates.first,
-    )) {
-      _dayWindowAppointmentCache.clear();
-      final List<List<DateTime>> blocks = <List<DateTime>>[
-        _previousViewVisibleDates,
-        _currentViewVisibleDates,
-        _nextViewVisibleDates,
-      ]..sort(
-        (List<DateTime> a, List<DateTime> b) => a.first.compareTo(b.first),
-      );
+    final List<List<DateTime>> blocks = <List<DateTime>>[
+      _previousViewVisibleDates,
+      _currentViewVisibleDates,
+      _nextViewVisibleDates,
+    ]..sort((List<DateTime> a, List<DateTime> b) => a.first.compareTo(b.first));
+    if (changedData != null ||
+        blocks.any(
+          (List<DateTime> block) =>
+              !_dayWindowAppointmentCache.containsKey(block.first),
+        )) {
       final _DayWindowAppointments shared = _DayWindowAppointments(
         blocks.expand((List<DateTime> block) => block).toList(),
         appointments,
         widget.calendar,
+        expandedAppointments: _expandDayWindowEdges(
+          blocks,
+          appointments,
+          changedData: changedData,
+        ),
+      );
+      _dayWindowAppointmentCache.removeWhere(
+        (DateTime date, _) =>
+            !blocks.any((List<DateTime> block) => block.first == date),
       );
       for (final List<DateTime> block in blocks) {
-        _dayWindowAppointmentCache[block.first] = _DayWindowAppointments(
+        final _DayWindowAppointments next = _DayWindowAppointments(
           block,
           appointments,
           widget.calendar,
           sharedLayout: shared,
         );
+        final _DayWindowAppointments? previous =
+            _dayWindowAppointmentCache[block.first];
+        if (previous == null || !previous.hasSameLayout(next)) {
+          _dayWindowAppointmentCache[block.first] = next;
+        }
       }
     }
     // A departing child can request its old dates during the same rebuild.
     // Do not retain that projection in the bounded current-buffer cache.
     return _dayWindowAppointmentCache[dates.first] ??
         _DayWindowAppointments(dates, appointments, widget.calendar);
+  }
+
+  // SF-22: retain occurrence instances over the intersection of the buffers,
+  // expanding only entering natural dates (also when settling by a single day).
+  List<CalendarAppointment> _expandDayWindowEdges(
+    List<List<DateTime>> blocks,
+    List<CalendarAppointment> appointments, {
+    List<dynamic>? changedData,
+  }) {
+    final DateTime start = blocks.first.first;
+    final DateTime end = blocks.last.last;
+    List<CalendarAppointment> expand(DateTime first, DateTime last) =>
+        AppointmentHelper.getVisibleAppointments(
+          first,
+          last,
+          appointments,
+          widget.calendar.timeZone,
+          false,
+        );
+    if (_dayWindowAppointmentCache.isEmpty) {
+      return expand(start, end);
+    }
+    final List<DateTime> oldStarts =
+        _dayWindowAppointmentCache.keys.toList()..sort();
+    final DateTime oldStart = oldStarts.first;
+    final DateTime oldEnd = _dayDate(oldStarts.last, blocks.first.length - 1);
+    if (end.isBefore(oldStart) || start.isAfter(oldEnd))
+      return expand(start, end);
+
+    // Keep source ordering, including equal public IDs belonging to different
+    // data objects. Duplicate source objects use the native expansion path.
+    final Map<
+      dynamic,
+      Map<(DateTime, DateTime, DateTime, DateTime), CalendarAppointment>
+    >
+    bySource =
+        Map<
+          dynamic,
+          Map<(DateTime, DateTime, DateTime, DateTime), CalendarAppointment>
+        >.identity();
+    for (final CalendarAppointment appointment in appointments) {
+      if (bySource.containsKey(appointment.data)) {
+        return expand(start, end);
+      }
+      bySource[appointment.data] =
+          <(DateTime, DateTime, DateTime, DateTime), CalendarAppointment>{};
+    }
+    final DateTime from = AppointmentHelper.convertToStartTime(start);
+    final DateTime to = AppointmentHelper.convertToEndTime(end);
+    void collect(Iterable<CalendarAppointment> instances) {
+      for (final CalendarAppointment appointment in instances) {
+        if (!AppointmentHelper.isAppointmentWithinVisibleDateRange(
+          appointment,
+          from,
+          to,
+        )) {
+          continue;
+        }
+        bySource[appointment.data]?.putIfAbsent((
+          appointment.actualStartTime,
+          appointment.actualEndTime,
+          appointment.exactStartTime,
+          appointment.exactEndTime,
+        ), () => appointment);
+      }
+    }
+
+    // SF-22: add/remove notifications refresh their sources only. A notified
+    // object may have changed in place, so never retain its old occurrences.
+    final Set<dynamic> changed =
+        Set<dynamic>.identity()..addAll(changedData ?? const <dynamic>[]);
+    for (final _DayWindowAppointments retained
+        in _dayWindowAppointmentCache.values) {
+      collect(
+        retained.visible.where(
+          (CalendarAppointment a) => !changed.contains(a.data),
+        ),
+      );
+    }
+    if (changed.isNotEmpty) {
+      collect(
+        AppointmentHelper.getVisibleAppointments(
+          start,
+          end,
+          appointments
+              .where((CalendarAppointment a) => changed.contains(a.data))
+              .toList(),
+          widget.calendar.timeZone,
+          false,
+        ),
+      );
+    }
+    if (start.isBefore(oldStart))
+      collect(expand(start, _dayDate(oldStart, -1)));
+    if (end.isAfter(oldEnd)) {
+      collect(expand(_dayDate(oldEnd, 1), end));
+    }
+    final List<CalendarAppointment> result = <CalendarAppointment>[];
+    for (final CalendarAppointment source in appointments) {
+      final List<CalendarAppointment> instances =
+          bySource[source.data]!.values.toList()..sort((
+            CalendarAppointment a,
+            CalendarAppointment b,
+          ) {
+            final int occurrence = a.exactStartTime.compareTo(b.exactStartTime);
+            return occurrence != 0
+                ? occurrence
+                : a.actualStartTime.compareTo(b.actualStartTime);
+          });
+      result.addAll(instances);
+    }
+    return result;
   }
 
   double get _dayWindowPanelHeight {

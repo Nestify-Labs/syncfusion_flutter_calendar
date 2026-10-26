@@ -9,6 +9,69 @@ import 'package:syncfusion_flutter_calendar/src/calendar/appointment_layout/appo
 import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_helper.dart';
 
 void main() {
+  // SF-22: restoring a same-day timed anchor must retain its time component.
+  for (final days in [3, 7]) {
+    testWidgets('$days-day same-date displayDate restores time offset', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days, displayDate: DateTime(2026, 10, 19));
+      expect(h.coords!.scrollOffset, closeTo(0, .5));
+      h.controller.displayDate = DateTime(2026, 10, 19, 5, 55);
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.settledFirstDate, DateTime(2026, 10, 19));
+      expect(h.coords!.scrollOffset, closeTo(355, .5));
+    });
+  }
+  // SF-22: a delayed navigation scroll must not read a disposed page.
+  for (final days in [3, 7]) {
+    testWidgets('$days-day queued timed navigation survives disposal', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      h.controller.displayDate = DateTime(2026, 10, 19, 5, 55);
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+  }
+  // SF-22: repeated timed navigation must also retain legacy paging behavior.
+  for (final days in [3, 7]) {
+    for (final policy in DayWindowNavigation.values) {
+      testWidgets(
+        '$days-day $policy explicit timed navigation retains offset',
+        (tester) async {
+          final h = await _mount(
+            tester,
+            days,
+            policy: policy,
+            displayDate: DateTime(2026, 10, 19),
+          );
+          for (final target in [
+            DateTime(2026, 10, 19, 5, 55),
+            DateTime(2026, 11, 4, 8, 40),
+            DateTime(2026, 11, 4, 2, 15),
+            DateTime(2026, 11, 3, 6, 35),
+          ]) {
+            h.controller.displayDate = target;
+            // Hosts rebuild after explicit navigation in the legacy paged path.
+            h.rebuild(() {});
+            await tester.pumpAndSettle();
+            expect(h.controller.displayDate, target);
+            expect(
+              h.windows.last,
+              contains(DateTime(target.year, target.month, target.day)),
+            );
+            expect(
+              h.coords!.scrollOffset,
+              closeTo(target.hour * 60 + target.minute, .5),
+            );
+            expect(tester.takeException(), isNull);
+          }
+        },
+      );
+    }
+  }
   // SF-22: one buffer expansion must preserve each block's independent projection.
   for (final days in [3, 7]) {
     testWidgets(
@@ -144,6 +207,17 @@ void main() {
         h.controller.forward!();
         await tester.pumpAndSettle();
         check();
+        final drag = await tester.startGesture(const Offset(300, 400));
+        await drag.moveBy(const Offset(-20, 0));
+        await tester.pump();
+        await drag.moveBy(Offset(-h.column * .8, 0));
+        await tester.pump(const Duration(milliseconds: 500));
+        await drag.up();
+        await tester.pumpAndSettle();
+        check();
+        h.controller.backward!();
+        await tester.pumpAndSettle();
+        check();
         expect(tester.takeException(), isNull);
       },
     );
@@ -236,6 +310,347 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     }
+  }
+
+  // SF-22: crossing one block must only build the newly exposed dates.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      for (final direction in [-1, 1]) {
+        testWidgets(
+          '$days-day boundary retains overlapping blocks $rtl $direction',
+          (tester) async {
+            final h = await _mount(tester, days, rtl: rtl);
+            Map<DateTime, AppointmentLayout> layouts() => {
+              for (final layout in tester.widgetList<AppointmentLayout>(
+                find.byType(AppointmentLayout),
+              ))
+                layout.visibleDates.first: layout,
+            };
+            final before = layouts();
+            final initialBuilds = h.appointmentBuilds;
+            final offset = h.coords!.scrollOffset;
+            final commits = h.windows.length;
+            final drag = await tester.startGesture(const Offset(210, 400));
+            await drag.moveBy(Offset(direction * 20, 0));
+            await tester.pump();
+            await drag.moveBy(Offset(direction * h.column * (days + .2), 0));
+            await tester.pump(const Duration(milliseconds: 300));
+            final after = layouts();
+            expect(after, hasLength(3));
+            final retained = after.keys.where(before.containsKey).toList();
+            expect(retained, hasLength(2));
+            for (final date in retained) {
+              expect(
+                identical(before[date], after[date]),
+                isTrue,
+                reason: 'Unchanged dates $date must keep their layout',
+              );
+            }
+            expect(
+              h.appointmentBuilds - initialBuilds,
+              days,
+              reason: 'Only the new block invokes appointmentBuilder',
+            );
+            expect(h.windows.length, commits);
+            expect(h.coords!.scrollOffset, closeTo(offset, .5));
+            _checkVisibleEvents(tester, h);
+            await drag.cancel();
+            await tester.pumpAndSettle();
+            _checkVisibleEvents(tester, h);
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
+
+  // SF-22: data notifications must not discard unrelated buffered layouts.
+  for (final days in [3, 7]) {
+    testWidgets('$days-day data delta retains unaffected blocks', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      h.data.appointments!.add(
+        Appointment(
+          id: 'retained-recurring',
+          startTime: DateTime(2026, 9, 1, 14),
+          endTime: DateTime(2026, 9, 1, 15),
+          recurrenceRule: 'FREQ=DAILY',
+        ),
+      );
+      h.data.notifyListeners(
+        CalendarDataSourceAction.reset,
+        h.data.appointments!,
+      );
+      await tester.pumpAndSettle();
+      Map<DateTime, AppointmentLayout> layouts() => {
+        for (final layout in tester.widgetList<AppointmentLayout>(
+          find.byType(AppointmentLayout),
+        ))
+          layout.visibleDates.first: layout,
+      };
+      var before = layouts();
+      final dates = before.keys.toList()..sort();
+      final changedDate = dates.last;
+      final extra = Appointment(
+        id: 'buffer-delta',
+        startTime: changedDate.add(const Duration(hours: 12)),
+        endTime: changedDate.add(const Duration(hours: 13)),
+      );
+      for (final action in [
+        CalendarDataSourceAction.add,
+        CalendarDataSourceAction.remove,
+      ]) {
+        final initialBuilds = h.appointmentBuilds;
+        if (action == CalendarDataSourceAction.add) {
+          h.data.appointments!.add(extra);
+        } else {
+          h.data.appointments!.remove(extra);
+        }
+        h.data.notifyListeners(action, [extra]);
+        await tester.pumpAndSettle();
+        expect(
+          h.appointmentBuilds - initialBuilds,
+          days * 2 + (action == CalendarDataSourceAction.add ? 1 : 0),
+          reason: 'Only the affected block invokes appointmentBuilder',
+        );
+        final after = layouts();
+        expect(after.keys, unorderedEquals(before.keys));
+        final affected = after[changedDate]!;
+        final oldOccurrences =
+            before[changedDate]!.visibleAppointments.value!
+                .where((a) => a.id == 'retained-recurring')
+                .toList();
+        final occurrences =
+            affected.visibleAppointments.value!
+                .where((a) => a.id == 'retained-recurring')
+                .toList();
+        expect(occurrences, hasLength(days));
+        for (var i = 0; i < days; i++) {
+          expect(identical(occurrences[i], oldOccurrences[i]), isTrue);
+        }
+        expect(
+          affected.visibleAppointments.value!.any((a) => a.id == extra.id),
+          action == CalendarDataSourceAction.add,
+        );
+        expect(identical(affected, before[changedDate]), isFalse);
+        for (final date in dates.where((date) => date != changedDate)) {
+          expect(
+            identical(after[date], before[date]),
+            isTrue,
+            reason: '$action must retain unaffected date block $date',
+          );
+        }
+        before = after;
+        expect(tester.takeException(), isNull);
+      }
+    });
+  }
+
+  testWidgets('value-equal remove/add still rebuilds the notified event', (
+    tester,
+  ) async {
+    final h = await _mount(tester, 3);
+    final event = h.data.appointments!.cast<Appointment>().firstWhere(
+      (a) => a.id == 'event-20',
+    );
+    final original = tester.widget(find.byKey(const ValueKey('event-20')));
+    // Hosts use this pair to refresh external builder state without changing
+    // Appointment values (for example a linked item's completion marker).
+    h.data.appointments!.remove(event);
+    h.data.notifyListeners(CalendarDataSourceAction.remove, [event]);
+    h.data.appointments!.add(event);
+    h.data.notifyListeners(CalendarDataSourceAction.add, [event]);
+    await tester.pumpAndSettle();
+    final refreshed = tester.widget(find.byKey(const ValueKey('event-20')));
+    expect(identical(original, refreshed), isFalse);
+    final beforeReset =
+        tester
+            .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+            .toList();
+    h.data.notifyListeners(
+      CalendarDataSourceAction.reset,
+      h.data.appointments!,
+    );
+    await tester.pumpAndSettle();
+    final afterReset =
+        tester
+            .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+            .toList();
+    for (var i = 0; i < 3; i++) {
+      expect(identical(beforeReset[i], afterReset[i]), isFalse);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('all-day data delta updates shared lanes at constant height', (
+    tester,
+  ) async {
+    final h = await _mount(tester, 3);
+    final blocker = Appointment(
+      id: 'blocking',
+      isAllDay: true,
+      startTime: DateTime(2026, 10, 16),
+      endTime: DateTime(2026, 10, 16, 23),
+    );
+    h.data.appointments!.addAll([
+      blocker,
+      Appointment(
+        id: 'spanning',
+        isAllDay: true,
+        startTime: DateTime(2026, 10, 16, 1),
+        endTime: DateTime(2026, 10, 22, 23),
+      ),
+      for (var i = 0; i < 4; i++)
+        Appointment(
+          id: 'rows-$i',
+          isAllDay: true,
+          startTime: DateTime(2026, 10, 20),
+          endTime: DateTime(2026, 10, 20, 23),
+        ),
+    ]);
+    h.data.notifyListeners(
+      CalendarDataSourceAction.reset,
+      h.data.appointments!,
+    );
+    await tester.pumpAndSettle();
+    List<double> tops() =>
+        tester
+            .elementList(find.byKey(const ValueKey('spanning')))
+            .map(
+              (e) =>
+                  (e.findRenderObject()! as RenderBox)
+                      .localToGlobal(Offset.zero)
+                      .dy,
+            )
+            .toList();
+    final before = tops();
+    expect(before, hasLength(3));
+    final viewport = h.coords!.viewportTopInBody;
+    h.data.appointments!.remove(blocker);
+    h.data.notifyListeners(CalendarDataSourceAction.remove, [blocker]);
+    await tester.pumpAndSettle();
+    final after = tops();
+    expect(after, hasLength(3));
+    expect(h.coords!.viewportTopInBody, viewport);
+    for (var i = 0; i < 3; i++) {
+      expect(after[i], lessThan(before[i]));
+    }
+    h.data.appointments!.add(blocker);
+    h.data.notifyListeners(CalendarDataSourceAction.add, [blocker]);
+    await tester.pumpAndSettle();
+    expect(tops(), before);
+    expect(h.coords!.viewportTopInBody, viewport);
+    expect(tester.takeException(), isNull);
+  });
+
+  // SF-22: recurrence objects already covering retained dates stay reusable.
+  for (final days in [3, 7]) {
+    testWidgets('$days-day recurring blocks survive boundary and reverse', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      h.data.appointments = [
+        Appointment(
+          id: 'daily',
+          startTime: DateTime(2026, 9, 1, 10),
+          endTime: DateTime(2026, 9, 1, 11),
+          recurrenceRule: 'FREQ=DAILY',
+        ),
+      ];
+      h.data.notifyListeners(
+        CalendarDataSourceAction.reset,
+        h.data.appointments!,
+      );
+      await tester.pumpAndSettle();
+      Map<DateTime, AppointmentLayout> layouts() => {
+        for (final layout in tester.widgetList<AppointmentLayout>(
+          find.byType(AppointmentLayout),
+        ))
+          layout.visibleDates.first: layout,
+      };
+      var before = layouts();
+      final drag = await tester.startGesture(const Offset(210, 400));
+      await drag.moveBy(const Offset(-20, 0));
+      await tester.pump();
+      for (final direction in [-1, 1]) {
+        final builds = h.appointmentBuilds;
+        await drag.moveBy(Offset(direction * h.column * (days + .2), 0));
+        await tester.pump(const Duration(milliseconds: 300));
+        final after = layouts();
+        final retained = after.keys.where(before.containsKey).toList();
+        expect(retained, hasLength(2));
+        for (final date in retained) {
+          expect(
+            identical(before[date], after[date]),
+            isTrue,
+            reason: 'Unchanged recurrence instances must keep $date mounted',
+          );
+        }
+        expect(h.appointmentBuilds - builds, days);
+        for (final layout in after.values) {
+          expect(
+            layout.visibleAppointments.value!.map((a) => a.actualStartTime),
+            layout.visibleDates.map(
+              (d) => DateTime(d.year, d.month, d.day, 10),
+            ),
+          );
+        }
+        before = after;
+      }
+      await drag.cancel();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final days in [3, 7]) {
+    testWidgets('$days-day partial settlement retains expanded occurrences', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      h.data.appointments = [
+        Appointment(
+          id: 'daily',
+          startTime: DateTime(2026, 9, 1, 10),
+          endTime: DateTime(2026, 9, 1, 11),
+          recurrenceRule: 'FREQ=DAILY',
+        ),
+      ];
+      h.data.notifyListeners(
+        CalendarDataSourceAction.reset,
+        h.data.appointments!,
+      );
+      await tester.pumpAndSettle();
+      Map<DateTime, CalendarAppointment> occurrences() => {
+        for (final layout in tester.widgetList<AppointmentLayout>(
+          find.byType(AppointmentLayout),
+        ))
+          for (final a in layout.visibleAppointments.value!)
+            a.actualStartTime: a,
+      };
+      final before = occurrences();
+      final drag = await tester.startGesture(const Offset(300, 400));
+      await drag.moveBy(const Offset(-20, 0));
+      await tester.pump();
+      await drag.moveBy(Offset(-h.column * .8, 0));
+      await tester.pump(const Duration(milliseconds: 500));
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(h.windows.last.first, DateTime(2026, 10, 20));
+      final after = occurrences();
+      expect(after.length, days * 3);
+      final retained = after.keys.where(before.containsKey).toList();
+      expect(retained.length, days * 3 - 1);
+      for (final date in retained) {
+        expect(
+          identical(after[date], before[date]),
+          isTrue,
+          reason: 'Already expanded occurrence $date must be reused',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
   }
 
   // SF-22: retain steady-state layouts without suppressing timezone readiness.
@@ -778,6 +1193,120 @@ void main() {
       await tester.pumpAndSettle();
     },
   );
+
+  testWidgets('retained all-day lanes refresh at constant panel height', (
+    tester,
+  ) async {
+    final h = await _mount(tester, 3);
+    h.data.appointments!.addAll([
+      Appointment(
+        id: 'departing',
+        isAllDay: true,
+        startTime: DateTime(2026, 10, 16),
+        endTime: DateTime(2026, 10, 16, 23),
+      ),
+      Appointment(
+        id: 'retained-span',
+        isAllDay: true,
+        startTime: DateTime(2026, 10, 16, 1),
+        endTime: DateTime(2026, 10, 22, 23),
+      ),
+      for (var i = 0; i < 3; i++)
+        Appointment(
+          id: 'old-rows-$i',
+          isAllDay: true,
+          startTime: DateTime(2026, 10, 20),
+          endTime: DateTime(2026, 10, 20, 23),
+        ),
+      for (var i = 0; i < 4; i++)
+        Appointment(
+          id: 'new-rows-$i',
+          isAllDay: true,
+          startTime: DateTime(2026, 10, 23),
+          endTime: DateTime(2026, 10, 23, 23),
+        ),
+    ]);
+    h.data.notifyListeners(
+      CalendarDataSourceAction.reset,
+      h.data.appointments!,
+    );
+    await tester.pumpAndSettle();
+    final top = h.coords!.viewportTopInBody;
+    final drag = await tester.startGesture(const Offset(210, 400));
+    await drag.moveBy(const Offset(-20, 0));
+    await tester.pump();
+    await drag.moveBy(Offset(-h.column * 3.2, 0));
+    await tester.pump(const Duration(milliseconds: 300));
+    final spanTops =
+        tester
+            .elementList(find.byKey(const ValueKey('retained-span')))
+            .map(
+              (e) =>
+                  (e.findRenderObject()! as RenderBox)
+                      .localToGlobal(Offset.zero)
+                      .dy,
+            )
+            .toList();
+    final firstRow =
+        tester.getTopLeft(find.byKey(const ValueKey('new-rows-0'))).dy;
+    expect(h.coords!.viewportTopInBody, top);
+    expect(spanTops, isNotEmpty);
+    for (final y in spanTops) {
+      expect(
+        y,
+        closeTo(firstRow, .1),
+        reason: 'The departed blocker frees row zero on both retained blocks',
+      );
+    }
+    await drag.cancel();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      testWidgets('$days-day expanded panel survives block rotation $rtl', (
+        tester,
+      ) async {
+        final h = await _mount(tester, days, rtl: rtl);
+        h.data.appointments!.addAll([
+          for (var i = 0; i < 6; i++)
+            Appointment(
+              id: 'wide-$i',
+              isAllDay: true,
+              startTime: DateTime(2026, 9),
+              endTime: DateTime(2026, 12),
+            ),
+        ]);
+        h.data.notifyListeners(
+          CalendarDataSourceAction.reset,
+          h.data.appointments!,
+        );
+        await tester.pumpAndSettle();
+        final collapsed = h.coords!.viewportTopInBody;
+        await tester.tapAt(Offset(rtl ? 400 : 20, collapsed - 10));
+        await tester.pumpAndSettle();
+        final expanded = h.coords!.viewportTopInBody;
+        expect(expanded, greaterThan(collapsed + 40));
+        final drag = await tester.startGesture(const Offset(210, 500));
+        await drag.moveBy(const Offset(-20, 0));
+        await tester.pump();
+        for (final direction in [-1, 1]) {
+          await drag.moveBy(Offset(direction * h.column * (days + .2), 0));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(h.coords!.viewportTopInBody, closeTo(expanded, .1));
+          _checkVisibleEvents(tester, h);
+        }
+        await drag.cancel();
+        await tester.pumpAndSettle();
+        expect(h.coords!.viewportTopInBody, closeTo(expanded, .1));
+        await tester.tapAt(Offset(rtl ? 400 : 20, expanded - 10));
+        await tester.pumpAndSettle();
+        expect(h.coords!.viewportTopInBody, closeTo(collapsed, .1));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
 
   testWidgets('exposed adjacent more button expands all blocks together', (
     tester,
