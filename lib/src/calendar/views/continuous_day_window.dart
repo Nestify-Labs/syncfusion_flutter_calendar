@@ -16,16 +16,20 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
 
   bool get _usesContinuousDayWindow => _isContinuousDayWindow(widget);
 
-  void _finishDayWindowConfiguration(DateTime anchor) {
+  DateTime _boundedDayWindowFirst(DateTime anchor, int visibleDatesCount) {
     final DateTime min = _dayDate(widget.minDate, 0);
     final DateTime end = _dayDate(
       widget.maxDate,
-      1 - _currentViewVisibleDates.length,
+      1 - visibleDatesCount,
     );
     final DateTime max = end.isBefore(min) ? min : end;
-    final DateTime first =
-        anchor.isBefore(min) ? min : (anchor.isAfter(max) ? max : anchor);
-    _setDayWindowDates(first);
+    return anchor.isBefore(min) ? min : (anchor.isAfter(max) ? max : anchor);
+  }
+
+  void _finishDayWindowConfiguration(DateTime anchor) {
+    _setDayWindowDates(
+      _boundedDayWindowFirst(anchor, _currentViewVisibleDates.length),
+    );
     _position = 0;
     _dayWindowTravel = _dayWindowBaseTravel = 0;
     final int generation = _dayWindowGeneration;
@@ -452,7 +456,7 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
     widget.getCalendarState(_updateCalendarStateDetails);
     _updateCalendarStateDetails.currentDate = widget.controller.displayDate;
     widget.updateCalendarState(_updateCalendarStateDetails);
-    _updateVisibleDates();
+    _updateVisibleDates(useDayWindowAnchor: true);
     _settledDayWindowFirst = _currentViewVisibleDates.first;
     _publishDayWindowCoordinates();
     _updateMoveToDate();

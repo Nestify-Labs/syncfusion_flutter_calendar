@@ -4,6 +4,10 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.27 — continuous day-window spike (#4066, unreleased)
 
+- SF-22: synchronize the public date anchor with the bounded first day while retaining its requested time; host arrows reverse by three/seven days after reaching either date limit.
+
+- SF-22: preserve the browsed first day during explicit host arrow navigation and preference-driven view replacement, and clamp complete three/seven-day windows at min/max; default paged navigation is unchanged.
+
 - SF-22: retain the complete explicit date/time anchor during continuous navigation so same-day recurring-event refreshes restore the reading position instead of midnight. Stop delayed scroll callbacks when their page has been disposed during refresh or exit.
 
 - SF-22: refresh only changed sources and affected continuous blocks for add/remove notifications; preserve shared all-day geometry and value-equal forced builder refreshes, with full invalidation on reset.

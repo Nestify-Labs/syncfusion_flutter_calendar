@@ -403,7 +403,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
             : _moveToPreviousViewWithAnimation;
 
     _currentChildIndex = 1;
-    _updateVisibleDates();
+    // SF-22: a replaced continuous view retains the controller's browsed anchor.
+    _updateVisibleDates(useDayWindowAnchor: _usesContinuousDayWindow);
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 250),
       vsync: this,
@@ -654,7 +655,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
               widget.controller.displayDate;
         }
 
-        _updateVisibleDates();
+        // SF-22: a clamped controller rebuild retains its continuous first day.
+        _updateVisibleDates(useDayWindowAnchor: _usesContinuousDayWindow);
         _updateMoveToDate();
         _position = 0;
       }
@@ -3277,7 +3279,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     }
   }
 
-  void _updateVisibleDates() {
+  void _updateVisibleDates({bool useDayWindowAnchor = false}) {
     widget.getCalendarState(_updateCalendarStateDetails);
     final List<int>? nonWorkingDays =
         (widget.view == CalendarView.workWeek ||
@@ -3291,11 +3293,19 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       nonWorkingDays,
     );
 
-    final DateTime currentDate = DateTime(
+    DateTime currentDate = DateTime(
       _updateCalendarStateDetails.currentDate!.year,
       _updateCalendarStateDetails.currentDate!.month,
       _updateCalendarStateDetails.currentDate!.day,
     );
+    // SF-22: explicit continuous navigation anchors the first column without
+    // week alignment, while keeping the entire window inside min/max bounds.
+    if (useDayWindowAnchor) {
+      currentDate = _boundedDayWindowFirst(currentDate, visibleDatesCount);
+    }
+    final int firstDayOfWeek = useDayWindowAnchor
+        ? currentDate.weekday
+        : widget.calendar.firstDayOfWeek;
     final DateTime prevDate = DateTimeHelper.getPreviousViewStartDate(
       widget.view,
       widget.calendar.monthViewSettings.numberOfWeeksInView,
@@ -3315,21 +3325,21 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
         getVisibleDates(
           currentDate,
           nonWorkingDays,
-          widget.calendar.firstDayOfWeek,
+          firstDayOfWeek,
           visibleDatesCount,
         ).cast();
     _previousViewVisibleDates =
         getVisibleDates(
           widget.isRTL ? nextDate : prevDate,
           nonWorkingDays,
-          widget.calendar.firstDayOfWeek,
+          firstDayOfWeek,
           visibleDatesCount,
         ).cast();
     _nextViewVisibleDates =
         getVisibleDates(
           widget.isRTL ? prevDate : nextDate,
           nonWorkingDays,
-          widget.calendar.firstDayOfWeek,
+          firstDayOfWeek,
           visibleDatesCount,
         ).cast();
     if (widget.view == CalendarView.timelineMonth) {

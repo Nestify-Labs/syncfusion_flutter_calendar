@@ -4956,10 +4956,20 @@ class _SfCalendarState extends State<SfCalendar>
   void _updateDisplayDate() {
     // SF-22: explicit controller navigation owns the window immediately.
     final Widget? scrollView = _customScrollViewKey.currentWidget;
+    final DateTime? requestedDate = _controller.displayDate;
     if (_canScrollTimeSlotView && scrollView is CustomCalendarScrollView &&
         scrollView.navigateContinuousDayWindow()) {
-      // SF-22: retain the full explicit anchor before queued scrolling reads it.
-      _currentDate = _controller.displayDate!;
+      // SF-22: host arrows must use the clamped first day, retaining the requested
+      // time before queued scrolling reads it, even when the window did not move.
+      final DateTime firstDate = _currentViewVisibleDates.first;
+      _currentDate = requestedDate!.copyWith(
+        year: firstDate.year, month: firstDate.month, day: firstDate.day,
+      );
+      if (_controller.displayDate != _currentDate) {
+        _canScrollTimeSlotView = false;
+        _controller.displayDate = _currentDate;
+        _canScrollTimeSlotView = true;
+      }
       setState(() {});
       return;
     }

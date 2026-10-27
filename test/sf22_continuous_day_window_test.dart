@@ -775,6 +775,132 @@ void main() {
         _checkVisibleEvents(tester, h);
       },
     );
+    // SF-22: host arrows set displayDate directly after free day browsing.
+    testWidgets('$days-day host date arrows retain the browsed first day', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      final drag = await tester.startGesture(const Offset(300, 400));
+      await drag.moveBy(const Offset(-20, 0));
+      await tester.pump();
+      await drag.moveBy(Offset(-h.column * .8, 0));
+      await tester.pump(const Duration(milliseconds: 500));
+      await drag.up();
+      await tester.pumpAndSettle();
+      final browsed = DateTime(2026, 10, 20);
+      expect(h.windows.last.first, browsed);
+      for (final target in [DateTime(2026, 10, 20 + days), browsed]) {
+        h.controller.displayDate = target.add(
+          const Duration(hours: 5, minutes: 55),
+        );
+        await tester.pumpAndSettle();
+        expect(h.coords!.dayWindow!.settledFirstDate, target);
+        expect(h.windows.last.first, target);
+        expect(h.coords!.scrollOffset, closeTo(355, .5));
+        _checkVisibleEvents(tester, h);
+      }
+    });
+    // SF-22: an explicit last-date target must keep the whole window in range.
+    testWidgets('$days-day explicit date navigation clamps the whole window', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days, bounded: true);
+      h.controller.displayDate = h.maxDate;
+      await tester.pumpAndSettle();
+      expect(h.windows.last.last, h.maxDate);
+      expect(h.coords!.dayWindow!.settledFirstDate, DateTime(2026, 10, 22));
+      h.controller.displayDate = h.minDate;
+      await tester.pumpAndSettle();
+      expect(h.windows.last.first, h.minDate);
+      expect(tester.takeException(), isNull);
+      _checkVisibleEvents(tester, h);
+    });
+    // SF-22: host arrows derive their next target from the public displayDate.
+    for (final bounded in [false, true]) {
+      testWidgets(
+        '$days-day host arrows reverse at ${bounded ? "custom" : "year"} limits',
+        (tester) async {
+          final h = await _mount(tester, days, bounded: bounded);
+          if (bounded) {
+            // Leave room for a full inward step at either custom boundary.
+            h.rebuild(() => h.maxDate = DateTime(2026, 11, 30));
+            await tester.pumpAndSettle();
+          }
+          final calendar = tester.widget<SfCalendar>(find.byType(SfCalendar));
+          DateTime timed(DateTime date, [int delta = 0]) => DateTime(
+            date.year,
+            date.month,
+            date.day + delta,
+            5,
+            55,
+            13,
+            24,
+            35,
+          );
+          final lastFirst = DateTime(
+            calendar.maxDate.year,
+            calendar.maxDate.month,
+            calendar.maxDate.day + 1 - days,
+          );
+          for (final edge in [lastFirst, calendar.minDate]) {
+            final outward = edge == lastFirst ? days : -days;
+            h.controller.displayDate = timed(edge);
+            await tester.pumpAndSettle();
+            for (final delta in [outward, -outward, outward]) {
+              h.controller.displayDate = timed(
+                h.controller.displayDate!,
+                delta,
+              );
+              await tester.pumpAndSettle();
+              final expected = delta == outward ? edge : timed(edge, -outward);
+              expect(
+                h.windows.last.first,
+                DateTime(expected.year, expected.month, expected.day),
+              );
+              expect(h.controller.displayDate, timed(expected));
+              expect(h.coords!.scrollOffset, closeTo(355, .5));
+              expect(tester.takeException(), isNull);
+            }
+          }
+        },
+      );
+    }
+    // SF-22: real default calendar limits include full-window edge navigation.
+    testWidgets('$days-day default year limits retain legal windows', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      final calendar = tester.widget<SfCalendar>(find.byType(SfCalendar));
+      expect(calendar.minDate, DateTime(1));
+      expect(calendar.maxDate, DateTime(9999, 12, 31));
+      h.controller.displayDate = calendar.maxDate;
+      await tester.pumpAndSettle();
+      final lastFirst = DateTime(9999, 12, 32 - days);
+      expect(h.windows.last.first, lastFirst);
+      expect(h.windows.last.last, calendar.maxDate);
+      h.controller.forward!();
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.settledFirstDate, lastFirst);
+      h.controller.backward!();
+      await tester.pumpAndSettle();
+      expect(h.windows.last.first, DateTime(9999, 12, 32 - days * 2));
+      h.controller.forward!();
+      await tester.pumpAndSettle();
+      expect(h.windows.last.last, calendar.maxDate);
+      h.controller.displayDate = calendar.minDate;
+      await tester.pumpAndSettle();
+      expect(h.windows.last.first, calendar.minDate);
+      h.controller.backward!();
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.settledFirstDate, calendar.minDate);
+      h.controller.forward!();
+      await tester.pumpAndSettle();
+      expect(h.windows.last.first, DateTime(1, 1, 1 + days));
+      h.controller.backward!();
+      await tester.pumpAndSettle();
+      expect(h.windows.last.first, calendar.minDate);
+      expect(tester.takeException(), isNull);
+    });
     testWidgets(
       '$days-day explicit navigation with weekday reconfiguration wins',
       (tester) async {
@@ -792,12 +918,24 @@ void main() {
       '$days-day replacement sharing a controller retires the old listener',
       (tester) async {
         final h = await _mount(tester, days);
+        h.controller.forward!();
+        await tester.pumpAndSettle();
+        final drag = await tester.startGesture(const Offset(300, 400));
+        await drag.moveBy(const Offset(-20, 0));
+        await tester.pump();
+        await drag.moveBy(Offset(-h.column * .8, 0));
+        await tester.pump(const Duration(milliseconds: 500));
+        await drag.up();
+        await tester.pumpAndSettle();
+        final browsed = DateTime(2026, 10, 20 + days);
+        expect(h.windows.last.first, browsed);
         h.rebuild(() {
           h.key = GlobalKey<SfCalendarTimelineQueryApi>();
         });
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        expect(h.coords!.dayWindow!.settledFirstDate, DateTime(2026, 10, 19));
+        expect(h.coords!.dayWindow!.settledFirstDate, browsed);
+        expect(h.windows.last.first, browsed);
         h.controller.displayDate = DateTime(2026, 11, 9);
         await tester.pumpAndSettle();
         expect(h.coords!.dayWindow!.settledFirstDate, DateTime(2026, 11, 9));
