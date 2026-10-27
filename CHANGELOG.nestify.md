@@ -2,7 +2,9 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
-## v33.2.8+nestify.27 — continuous day-window spike (#4066, unreleased)
+## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
+
+- SF-22/SF-18: retain the .27 fully concurrent width sharing while reusing normalized timestamps in both cluster detection and the concurrency check.
 
 - SF-22: synchronize the public date anchor with the bounded first day while retaining its requested time; host arrows reverse by three/seven days after reaching either date limit.
 
@@ -24,7 +26,11 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 - SF-22: preserve explicit Today/weekday navigation during geometry rebuilds and retire deactivated shared-controller listeners during host scope replacement.
 
-- SF-22: opt-in 3/7-day continuous browsing with bounded date blocks, day snapping, atomic horizontal coordinates, shared all-day/vertical geometry, and transformed native drag hit testing; default paging is unchanged. Includes a standalone preview and clipped semantics for buffered date blocks. Host integration and native acceptance are pending; no release tag has been created.
+- SF-22: opt-in 3/7-day continuous browsing with bounded date blocks, day snapping, atomic horizontal coordinates, shared all-day/vertical geometry, and transformed native drag hit testing; default paging is unchanged. Includes a standalone preview and clipped semantics for buffered date blocks. Host integration and targeted engineering native acceptance are recorded in the consumer; full release acceptance remains pending and no release tag has been created.
+
+## v33.2.8+nestify.27 — SF-18 collision width sharing (#4139)
+
+- SF-18: reserve a base lane for same-start rows only within fully concurrent clusters; adapt narrow fully concurrent groups to equal-width cards with at most 50% horizontal occlusion, in actual paint order. Historical connected-chain geometry, sparse-to-dense overlays (#3461), lane recycling (#2859), timestamps and the default lane-fill path are retained. Phone and Pad share the actual column-width calculation; very narrow columns do not guarantee readable titles. Validated through the consumer’s local path override before tagging.
 
 ## v33.2.8+nestify.26 — shared paging and scale coordinates (#3949)
 
