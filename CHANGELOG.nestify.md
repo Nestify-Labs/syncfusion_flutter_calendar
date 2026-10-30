@@ -4,6 +4,16 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
 
+- SF-22 (#4241, candidate): reuse the current date block's prepared occurrences in the parent calendar during navigation, keeping independent mutable lists and the existing all-day/source-refresh paths.
+
+- SF-22 (#4241, candidate): keep clipped date-block rulers offstage in continuous views, retaining their layout while painting the shared fixed ruler; paged and unsupported views still paint native rulers.
+
+- SF-22 (#4241, candidate): share one geometry snapshot and per-column visibility checks within each all-day panel height calculation; partial-column, RTL and shared-lane behavior remain unchanged.
+
+- SF-22 (#4241, candidate): retain one fixed-ruler display list across motion; rebuild it on date, style, locale, scale, geometry or system-font changes and release it with its owner. Native label pixels and default paging are unchanged.
+
+- SF-22 (#4242, candidate): ramp fling projection and spring launch from zero above the release-speed threshold, removing the multi-day discontinuity between nearly identical light swipes. Default paging is unchanged; native feel acceptance remains pending.
+
 - SF-22/SF-18: retain the .27 fully concurrent width sharing while reusing normalized timestamps in both cluster detection and the concurrency check.
 
 - SF-22: synchronize the public date anchor with the bounded first day while retaining its requested time; host arrows reverse by three/seven days after reaching either date limit.

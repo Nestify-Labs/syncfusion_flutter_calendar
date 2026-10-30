@@ -346,8 +346,12 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
     _previousViewVisibleDates = nextDates[0];
     _visibleDates = _currentViewVisibleDates = nextDates[1];
     _nextViewVisibleDates = nextDates[2];
+    // SF-22: the parent consumes the same prepared occurrences as this block.
+    final List<CalendarAppointment> visibleAppointments =
+        _dayWindowAppointments(_visibleDates).visible;
     widget.getCalendarState(_updateCalendarStateDetails);
     _updateCalendarStateDetails.currentViewVisibleDates = _visibleDates;
+    _updateCalendarStateDetails.visibleAppointments = visibleAppointments;
     _updateCalendarStateDetails.transientDayWindow = true;
     widget.updateCalendarState(_updateCalendarStateDetails);
     _updateCalendarStateDetails.transientDayWindow = false;
@@ -478,21 +482,22 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
     }
     _stopDayWindowMotion();
     final int generation = _dayWindowGeneration;
+    // SF-22: ramp inertia from zero at the fling threshold. Applying the full
+    // velocity at 300 px/s adds ~150 px in one step to a light swipe (#4242).
+    final double speed = velocity.clamp(-8000.0, 8000.0);
+    final double flingSpeed = speed.sign * math.max(0.0, speed.abs() - 300);
     _dayWindowPhase =
-        velocity.abs() >= 300
-            ? DayWindowPhase.ballistic
-            : DayWindowPhase.settling;
+        flingSpeed != 0 ? DayWindowPhase.ballistic : DayWindowPhase.settling;
     _dayWindowTravel = _position;
     _dayWindowBaseTravel = 0;
     // Native scroll friction predicts distance; cap one fling at three windows.
-    final double speed = velocity.clamp(-8000.0, 8000.0);
     final double projection =
-        speed.abs() < 300
+        flingSpeed == 0
             ? 0
             : FrictionSimulation(
               0.135,
               0,
-              speed,
+              flingSpeed,
             ).finalX.clamp(-3 * _dayWindowStride, 3 * _dayWindowStride);
     final double destination = _boundedDayTravel(
       ((target ?? (_position + projection)) / _dayColumnWidth).round() *
@@ -515,7 +520,7 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
             ),
             _position,
             destination,
-            speed,
+            flingSpeed,
             tolerance: const Tolerance(distance: .01, velocity: .1),
           ),
         )
@@ -646,7 +651,7 @@ class _DayWindowRulerPainter extends CustomPainter {
       Rect.fromLTWH(left, top, ruler, math.max(0, size.height - top)),
     );
     canvas.translate(left, top - scroll);
-    _TimeRulerView(
+    final _TimeRulerView rulerPainter = _TimeRulerView(
       page._horizontalLinesCount!,
       page._timeIntervalHeight,
       widget.calendar.timeSlotViewSettings,
@@ -657,10 +662,30 @@ class _DayWindowRulerPainter extends CustomPainter {
       false,
       owner._currentViewVisibleDates,
       widget.textScaleFactor,
-    ).paint(
-      canvas,
-      Size(ruler, page._horizontalLinesCount! * page._timeIntervalHeight),
     );
+    final Size rulerSize = Size(
+      ruler,
+      page._horizontalLinesCount! * page._timeIntervalHeight,
+    );
+    final _TimeRulerView? previous = owner._dayWindowRulerDelegate;
+    // SF-22: scrolling translates the same fixed labels. Keep one display list
+    // until date/locale/theme/scale/geometry changes; release it with the owner.
+    if (owner._dayWindowRulerPicture == null ||
+        owner._dayWindowRulerSize != rulerSize ||
+        previous == null ||
+        previous.horizontalLinesCount != rulerPainter.horizontalLinesCount ||
+        previous.timeIntervalHeight != rulerPainter.timeIntervalHeight ||
+        rulerPainter.shouldRepaint(previous)) {
+      final ui.PictureRecorder recorder = ui.PictureRecorder();
+      rulerPainter.paint(Canvas(recorder), rulerSize);
+      final ui.Picture picture = recorder.endRecording();
+      owner._dayWindowRulerPicture?.dispose();
+      owner._dayWindowRulerPicture = picture;
+      owner._dayWindowRulerDelegate = rulerPainter;
+      owner._dayWindowRulerSize = rulerSize;
+    }
+    rulerPainter._textPainter.dispose();
+    canvas.drawPicture(owner._dayWindowRulerPicture!);
     canvas.restore();
   }
 

@@ -4626,8 +4626,11 @@ class _SfCalendarState extends State<SfCalendar>
   }
 
   /// Updates the visible appointments for the calendar
+  // SF-22: navigation can reuse a prepared projection; source updates expand normally.
   // ignore: avoid_void_async
-  void _updateVisibleAppointments() async {
+  void _updateVisibleAppointments({
+    List<CalendarAppointment>? preparedAppointments,
+  }) async {
     if (!_timeZoneLoaded) {
       return;
     }
@@ -4647,6 +4650,7 @@ class _SfCalendarState extends State<SfCalendar>
       }
 
       final List<CalendarAppointment> tempVisibleAppointment =
+          preparedAppointments ??
           AppointmentHelper.getVisibleAppointments(
             viewStartDate,
             viewEndDate,
@@ -10425,7 +10429,12 @@ class _SfCalendarState extends State<SfCalendar>
       _visibleAppointments = <CalendarAppointment>[];
       _allDayPanelHeight = 0;
       _isNeedLoadMore = widget.loadMoreWidgetBuilder != null;
-      _updateVisibleAppointments();
+      // SF-22: keep the parent's mutable list separate from the block cache.
+      _updateVisibleAppointments(
+        preparedAppointments: details.transientDayWindow
+            ? List<CalendarAppointment>.of(details.visibleAppointments)
+            : null,
+      );
     }
 
     // SF-22: publish once after settling, even when the rendered dates are unchanged.

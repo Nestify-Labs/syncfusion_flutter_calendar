@@ -320,21 +320,31 @@ extension _DayWindowData on _CustomCalendarScrollViewState {
 
   double get _dayWindowPanelHeight {
     int rows = 0;
+    // SF-22: geometry is constant within this calculation. Share one snapshot
+    // and one visibility check per column across all all-day appointments.
+    late final DayWindowSnapshot snapshot = _dayWindowSnapshot!;
+    late final double right = snapshot.contentLeft + _dayWindowStride;
     for (final List<DateTime> dates in <List<DateTime>>[
       _previousViewVisibleDates,
       _currentViewVisibleDates,
       _nextViewVisibleDates,
     ]) {
       final _DayWindowAppointments model = _dayWindowAppointments(dates);
+      if (model.views.isEmpty)
+        continue;
+      final List<bool> visibleColumns = <bool>[];
+      for (final DateTime date in dates) {
+        final double x = snapshot.xForDate(date);
+        visibleColumns.add(
+          x + snapshot.columnWidth > snapshot.contentLeft + .01 &&
+              x < right - .01,
+        );
+      }
       for (final AppointmentView view in model.views) {
         final int start = math.max(0, view.startIndex);
         final int end = math.min(dates.length, view.endIndex);
         for (int i = start; i < end; i++) {
-          final double x = _dayWindowSnapshot!.xForDate(dates[i]);
-          final double left =
-              widget.isRTL ? 0 : widget.width - _dayWindowStride;
-          if (x + _dayColumnWidth > left + .01 &&
-              x < left + _dayWindowStride - .01) {
+          if (visibleColumns[i]) {
             rows = math.max(rows, view.position + 1);
             break;
           }

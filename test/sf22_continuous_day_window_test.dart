@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 // SF-22: product-level day-window gestures, independent of private page state.
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -7,8 +8,169 @@ import 'package:syncfusion_flutter_calendar/src/calendar/appointment_engine/appo
 import 'package:syncfusion_flutter_calendar/src/calendar/appointment_layout/allday_appointment_layout.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/appointment_layout/appointment_layout.dart';
 import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_helper.dart';
+import 'package:syncfusion_flutter_calendar/src/calendar/views/calendar_view.dart';
 
 void main() {
+  // SF-22: hidden block rulers must not paint; the shared fixed ruler still does.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      testWidgets('$days-day hidden rulers skip paint with RTL=$rtl', (
+        tester,
+      ) async {
+        final h = await _mount(tester, days, rtl: rtl);
+        List<_CountingRulerPainter> watch(String name) {
+          final watched = <_CountingRulerPainter>[];
+          for (final element
+              in find.byType(CustomPaint, skipOffstage: false).evaluate()) {
+            final render = element.renderObject! as RenderCustomPaint;
+            if (render.painter.runtimeType.toString() != name)
+              continue;
+            final counter = _CountingRulerPainter(render.painter!);
+            render.painter = counter;
+            watched.add(counter);
+          }
+          expect(
+            watched,
+            isNotEmpty,
+            reason: 'the paint probe must be attached',
+          );
+          return watched;
+        }
+
+        final hidden = watch('_TimeRulerView');
+        final fixed = watch('_DayWindowRulerPainter');
+        await tester.pump();
+        expect(fixed.fold(0, (n, p) => n + p.paints), greaterThan(0));
+        expect(hidden.fold(0, (n, p) => n + p.paints), 0);
+
+        h.rebuild(() => h.policy = DayWindowNavigation.paged);
+        await tester.pumpAndSettle();
+        final paged = watch('_TimeRulerView');
+        await tester.pump();
+        expect(paged.fold(0, (n, p) => n + p.paints), greaterThan(0));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+  testWidgets('fixed ruler reuses pixels and invalidates configuration', (
+    tester,
+  ) async {
+    final h = await _mount(tester, 3);
+    CustomPainter painter(String name) =>
+        tester
+            .widgetList<CustomPaint>(
+              find.byType(CustomPaint, skipOffstage: false),
+            )
+            .map((widget) => widget.painter)
+            .firstWhere((painter) => painter.runtimeType.toString() == name)!;
+    ui.Picture fixedPicture() {
+      final canvas = _RulerPictureCanvas();
+      painter('_DayWindowRulerPainter').paint(canvas, const Size(420, 850));
+      expect(
+        canvas.pictures,
+        hasLength(1),
+        reason: 'the fixed time labels use one retained picture',
+      );
+      return canvas.pictures.single;
+    }
+
+    Future<void> matchesUncached(ui.Picture cached, int height) async {
+      final recorder = ui.PictureRecorder();
+      painter(
+        '_TimeRulerView',
+      ).paint(Canvas(recorder), Size(42, height.toDouble()));
+      final native = recorder.endRecording();
+      final pixels = await tester.runAsync(() async {
+        Future<List<int>> rgba(ui.Picture picture) async {
+          final image = await picture.toImage(42, height);
+          final data = await image.toByteData();
+          image.dispose();
+          return data!.buffer.asUint8List();
+        }
+
+        return [await rgba(cached), await rgba(native)];
+      });
+      native.dispose();
+      expect(
+        pixels![0],
+        pixels[1],
+        reason: 'cached labels and borders match native pixels',
+      );
+    }
+
+    var first = fixedPicture();
+    expect(fixedPicture(), same(first));
+    await matchesUncached(first, 1440);
+    h.rebuild(() => h.intervalHeight = 80);
+    await tester.pumpAndSettle();
+    final resized = fixedPicture();
+    expect(resized, isNot(same(first)));
+    await matchesUncached(resized, 1920);
+    first = resized;
+    h.rebuild(() => h.rtl = true);
+    await tester.pumpAndSettle();
+    final rtl = fixedPicture();
+    expect(rtl, isNot(same(first)));
+    await matchesUncached(rtl, 1920);
+    await tester.binding.handleSystemMessage({'type': 'fontsChange'});
+    await tester.pump();
+    final fontsChanged = fixedPicture();
+    expect(fontsChanged, isNot(same(rtl)));
+    await matchesUncached(fontsChanged, 1920);
+    h.rebuild(
+      () =>
+          h.rulerTextStyle = const TextStyle(
+            color: Colors.purple,
+            fontSize: 10,
+          ),
+    );
+    await tester.pumpAndSettle();
+    final styled = fixedPicture();
+    expect(styled, isNot(same(fontsChanged)));
+    await matchesUncached(styled, 1920);
+    h.controller.displayDate = DateTime(2026, 10, 24, 9);
+    await tester.pumpAndSettle();
+    final dated = fixedPicture();
+    expect(dated, isNot(same(styled)));
+    await matchesUncached(dated, 1920);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.binding.handleSystemMessage({'type': 'fontsChange'});
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+  // SF-22: nearly identical light swipes must not jump several extra dates
+  // when the release velocity crosses the inertia threshold (#4242).
+  for (final days in [3, 7]) {
+    for (final direction in [-1.0, 1.0]) {
+      testWidgets(
+        '$days-day light swipe has no inertia threshold cliff $direction',
+        (tester) async {
+          final h = await _mount(tester, days);
+          final dates = <DateTime>[];
+          final origin = DateTime(2026, 10, 19);
+          for (final speed in [299.0, 301.0, 900.0, 1800.0]) {
+            h.controller.displayDate = DateTime(2026, 10, 19, 9);
+            await tester.pumpAndSettle();
+            await tester.flingFrom(
+              const Offset(210, 400),
+              Offset(direction * 60, 0),
+              speed,
+            );
+            await tester.pumpAndSettle();
+            dates.add(h.coords!.dayWindow!.settledFirstDate);
+            _checkVisibleEvents(tester, h);
+          }
+          expect(dates[1], dates.first);
+          final travel = dates.map((date) => date.difference(origin).inDays);
+          expect(travel.elementAt(2).abs(), greaterThan(travel.first.abs()));
+          expect(travel.last.abs(), greaterThan(travel.elementAt(2).abs()));
+          expect(travel.last * -direction, greaterThan(1));
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
   // SF-22: restoring a same-day timed anchor must retain its time component.
   for (final days in [3, 7]) {
     testWidgets('$days-day same-date displayDate restores time offset', (
@@ -73,13 +235,14 @@ void main() {
     }
   }
   // SF-22: one buffer expansion must preserve each block's independent projection.
-  for (final days in [3, 7]) {
+  for (final (days, rtl) in [(3, false), (7, false), (3, true), (7, true)]) {
     testWidgets(
-      '$days-day buffered recurrence projection is equivalent and shared',
+      '$days-day buffered recurrence projection is equivalent and shared RTL=$rtl',
       (tester) async {
         final h = await _mount(
           tester,
           days,
+          rtl: rtl,
           timeZone: 'Eastern Standard Time',
           displayDate: DateTime(2026, 10, 31, 9),
         );
@@ -144,7 +307,7 @@ void main() {
           a.isSpanned,
           a.notes,
         ];
-        void check() {
+        void check({bool parentShared = false}) {
           final layouts =
               tester
                   .widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
@@ -194,6 +357,35 @@ void main() {
             }
           }
           expect(sharedCount, greaterThan(0));
+          if (parentShared) {
+            // SF-22: navigation hands the existing projection to the parent;
+            // occurrence objects are shared, but mutable lists stay separate.
+            final state = UpdateCalendarStateDetails();
+            tester
+                .widget<CustomCalendarScrollView>(
+                  find.byType(CustomCalendarScrollView),
+                )
+                .getCalendarState(state);
+            final current = layouts.singleWhere(
+              (layout) =>
+                  layout.visibleDates.first ==
+                  state.currentViewVisibleDates.first,
+            );
+            final projected = current.visibleAppointments.value!;
+            expect(projected, isNotEmpty);
+            expect(
+              state.visibleAppointments.map(signature).toList(),
+              projected.map(signature).toList(),
+            );
+            expect(state.visibleAppointments, isNot(same(projected)));
+            for (var i = 0; i < projected.length; i++) {
+              expect(
+                state.visibleAppointments[i],
+                same(projected[i]),
+                reason: 'Parent navigation must not expand recurrence again',
+              );
+            }
+          }
         }
 
         check();
@@ -206,7 +398,7 @@ void main() {
         check();
         h.controller.forward!();
         await tester.pumpAndSettle();
-        check();
+        check(parentShared: true);
         final drag = await tester.startGesture(const Offset(300, 400));
         await drag.moveBy(const Offset(-20, 0));
         await tester.pump();
@@ -214,10 +406,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 500));
         await drag.up();
         await tester.pumpAndSettle();
-        check();
+        check(parentShared: true);
         h.controller.backward!();
         await tester.pumpAndSettle();
-        check();
+        check(parentShared: true);
         expect(tester.takeException(), isNull);
       },
     );
@@ -1725,6 +1917,7 @@ class _Harness {
   bool rtl = false;
   DateTime? minDate, maxDate;
   double intervalHeight = 60;
+  TextStyle? rulerTextStyle;
   int firstDayOfWeek = 1;
   SfCalendarTimelineCoordinates? coords;
   int appointmentBuilds = 0;
@@ -1830,6 +2023,7 @@ Future<_Harness> _mount(
                     numberOfDaysInView: days == 3 ? 3 : -1,
                     timeRulerSize: 42,
                     timeIntervalHeight: h.intervalHeight,
+                    timeTextStyle: h.rulerTextStyle,
                   ),
                 ),
               );
@@ -1884,4 +2078,28 @@ void _checkVisibleEvents(WidgetTester tester, _Harness h) {
     greaterThanOrEqualTo(h.days),
     reason: rectangles.join('\n'),
   );
+}
+
+// SF-22: record picture reuse without reproducing the ruler's rendering logic.
+class _RulerPictureCanvas extends Fake implements Canvas {
+  final pictures = <ui.Picture>[];
+  @override
+  void drawPicture(ui.Picture picture) => pictures.add(picture);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+// SF-22: count actual render-pipeline paints while retaining the native painter.
+class _CountingRulerPainter extends CustomPainter {
+  _CountingRulerPainter(this.delegate);
+  final CustomPainter delegate;
+  int paints = 0;
+  @override
+  void paint(Canvas canvas, Size size) {
+    paints++;
+    delegate.paint(canvas, size);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

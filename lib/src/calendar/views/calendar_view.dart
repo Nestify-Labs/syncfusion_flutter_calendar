@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui; // SF-22: retain the fixed ruler display list.
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -308,6 +309,10 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   DayWindowPhase _dayWindowPhase = DayWindowPhase.idle;
   DateTime? _settledDayWindowFirst;
   final ValueNotifier<int> _dayWindowRulerRepaint = ValueNotifier<int>(0);
+  // SF-22: a single owned picture, invalidated by ruler configuration.
+  ui.Picture? _dayWindowRulerPicture;
+  _TimeRulerView? _dayWindowRulerDelegate;
+  Size? _dayWindowRulerSize;
   final Map<DateTime, _DayWindowAppointments> _dayWindowAppointmentCache = <DateTime, _DayWindowAppointments>{};
   List<CalendarAppointment>? _dayWindowAppointmentSource;
   bool _dayWindowSyncingVertical = false;
@@ -315,6 +320,15 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   bool? _dayWindowTimeZoneLoaded;
   Offset? _dayWindowAppointmentPointer;
   bool _dayWindowDragRefreshPending = false;
+
+  // SF-22: invalidate the single retained display list when fonts change.
+  void _clearDayWindowRuler() {
+    _dayWindowRulerPicture?.dispose();
+    _dayWindowRulerPicture = null;
+    _dayWindowRulerDelegate = null;
+    _dayWindowRulerSize = null;
+    _dayWindowRulerRepaint.value++;
+  }
 
   // SF-22: keep State's protected rebuild API inside its owning instance.
   void _rebuildDayWindow() => setState(() {});
@@ -416,6 +430,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     _timeRegions = CalendarViewHelper.cloneList(widget.specialRegions);
 
     super.initState();
+    // SF-22: font loading changes glyphs without changing the TextStyle key.
+    PaintingBinding.instance.systemFonts.addListener(_clearDayWindowRuler);
   }
 
   @override
@@ -1051,7 +1067,9 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     // SF-22: cancel any pending completion before disposing the ticker.
     _dayWindowGeneration++;
     _dayWindowMotion?.dispose();
+    PaintingBinding.instance.systemFonts.removeListener(_clearDayWindowRuler);
     _dayWindowRulerRepaint.dispose();
+    _dayWindowRulerPicture?.dispose();
     _timelineViewportTop.dispose();
     _animationController.dispose();
     _animation.removeListener(animationListener);
@@ -10930,21 +10948,26 @@ class _CalendarViewState extends State<_CalendarView>
                         ],
                       ),
                     ),
-                    RepaintBoundary(
-                      child: CustomPaint(
-                        painter: _TimeRulerView(
-                          _horizontalLinesCount!,
-                          _timeIntervalHeight,
-                          widget.calendar.timeSlotViewSettings,
-                          widget.calendar.cellBorderColor,
-                          isRTL,
-                          widget.locale,
-                          widget.calendarTheme,
-                          CalendarViewHelper.isTimelineView(widget.view),
-                          widget.visibleDates,
-                          widget.textScaleFactor,
+                    // SF-22: block rulers are clipped by the date-only layout.
+                    // Keep their geometry, but paint only the shared fixed ruler.
+                    Offstage(
+                      offstage: _continuousDayBlock,
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _TimeRulerView(
+                            _horizontalLinesCount!,
+                            _timeIntervalHeight,
+                            widget.calendar.timeSlotViewSettings,
+                            widget.calendar.cellBorderColor,
+                            isRTL,
+                            widget.locale,
+                            widget.calendarTheme,
+                            CalendarViewHelper.isTimelineView(widget.view),
+                            widget.visibleDates,
+                            widget.textScaleFactor,
+                          ),
+                          size: Size(timeLabelWidth, height),
                         ),
-                        size: Size(timeLabelWidth, height),
                       ),
                     ),
                     RepaintBoundary(
