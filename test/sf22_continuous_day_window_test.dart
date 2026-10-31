@@ -11,6 +11,227 @@ import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_he
 import 'package:syncfusion_flutter_calendar/src/calendar/views/calendar_view.dart';
 
 void main() {
+  // SF-22: settlement changes the logical window, not the mounted date blocks.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      for (final direction in [-1, 1]) {
+        testWidgets('$days-day partial settlement preserves layouts $rtl $direction',
+            (tester) async {
+          final h = await _mount(tester, days, rtl: rtl);
+          Map<DateTime, AppointmentLayout> layouts() => {
+            for (final layout in tester.widgetList<AppointmentLayout>(find.byType(AppointmentLayout)))
+              layout.visibleDates.first: layout,
+          };
+          final before = layouts();
+          final sign = (rtl ? 1.0 : -1.0) * direction;
+          final drag = await tester.startGesture(const Offset(210, 400));
+          await drag.moveBy(Offset(sign * 20, 0));
+          await tester.pump();
+          await drag.moveBy(Offset(sign * h.column * .8, 0));
+          await tester.pump(const Duration(milliseconds: 500));
+          await drag.up();
+          await tester.pumpAndSettle();
+          final expected = DateTime(2026, 10, 19 + direction);
+          expect(h.windows.last.first, expected);
+          expect(h.controller.displayDate, expected);
+          expect(h.coords!.visibleDates.first, expected);
+          final after = layouts();
+          expect(after.keys.toSet(), before.keys.toSet());
+          for (final date in before.keys) {
+            expect(identical(before[date], after[date]), isTrue,
+                reason: 'Settling within the buffer must retain layout $date');
+          }
+          _checkVisibleEvents(tester, h);
+          final settled = h.coords!.dayWindow!;
+          expect(settled.xForDate(expected),
+              closeTo(settled.contentLeft + (rtl ? (days - 1) * h.column : 0), .5));
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
+  }
+
+  // SF-22: keep horizontal buffer geometry without eagerly building its cards.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      testWidgets('$days-day horizontal viewport defers distant content RTL=$rtl',
+          (tester) async {
+        final h = await _mount(tester, days, rtl: rtl);
+        h.showSubjects = true;
+        final future = Appointment(
+          id: 'future-content',
+          subject: 'Original buffer title',
+          startTime: DateTime(2026, 10, 19 + days + 1, 12),
+          endTime: DateTime(2026, 10, 19 + days + 1, 13),
+        );
+        h.data.appointments!.add(future);
+        h.data.notifyListeners(CalendarDataSourceAction.reset, h.data.appointments!);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('future-content')), findsNothing,
+            reason: 'Distant horizontal buffer must not build event content');
+        expect(tester.widgetList<AppointmentLayout>(find.byType(AppointmentLayout))
+            .expand((layout) => layout.visibleAppointments.value!)
+            .any((event) => event.id == 'future-content'), isTrue,
+            reason: 'Deferred content must retain full geometry inputs');
+        future.subject = 'Fresh buffer title';
+        h.data.notifyListeners(CalendarDataSourceAction.reset, h.data.appointments!);
+        await tester.pumpAndSettle();
+        final drag = await tester.startGesture(const Offset(210, 400));
+        final sign = rtl ? 1.0 : -1.0;
+        await drag.moveBy(Offset(sign * 20, 0));
+        await tester.pump();
+        // Check each exposed column in the first frame, including rebasing.
+        for (var step = 0; step < days * 2 + 2; step++) {
+          await drag.moveBy(Offset(sign * h.column / 2, 0));
+          await tester.pump(const Duration(milliseconds: 50));
+          _checkVisibleEvents(tester, h);
+        }
+        expect(find.text('Fresh buffer title').hitTestable(), findsOneWidget);
+        final point = tester.getCenter(find.byKey(const ValueKey('future-content')).hitTestable());
+        expect(h.key.currentState!.queryEmptySlotAt(point)!.isOnAppointment, isTrue);
+        await drag.up();
+        await tester.pumpAndSettle();
+        _checkVisibleEvents(tester, h);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+  // SF-22: timed builders are materialized near the vertical viewport only.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      testWidgets(
+        '$days-day vertical viewport lazily builds event content RTL=$rtl',
+        (tester) async {
+          final h = await _mount(tester, days, rtl: rtl);
+          h.showSubjects = true;
+          final early = Appointment(
+            id: 'early',
+            subject: 'Original',
+            startTime: DateTime(2026, 10, 20, 2),
+            endTime: DateTime(2026, 10, 20, 3),
+          );
+          h.data.appointments!.add(early);
+          h.data.notifyListeners(
+            CalendarDataSourceAction.reset,
+            h.data.appointments!,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('early')),
+            findsNothing,
+            reason: 'An offscreen event must not eagerly build its content',
+          );
+          _checkVisibleEvents(tester, h);
+          early.subject = 'Updated while offscreen';
+          h.data.notifyListeners(
+            CalendarDataSourceAction.reset,
+            h.data.appointments!,
+          );
+          await tester.pumpAndSettle();
+          h.controller.displayDate = DateTime(2026, 10, 19, 2);
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('early')).hitTestable(),
+            findsOneWidget,
+          );
+          expect(find.text('Updated while offscreen'), findsOneWidget);
+          final point = tester.getCenter(
+            find.byKey(const ValueKey('early')).hitTestable(),
+          );
+          expect(
+            h.key.currentState!.queryEmptySlotAt(point)!.isOnAppointment,
+            isTrue,
+          );
+          h.controller.displayDate = DateTime(2026, 10, 19, 9);
+          await tester.pumpAndSettle();
+          expect(find.byKey(const ValueKey('early')), findsNothing);
+          await tester.dragFrom(
+            Offset(rtl ? 400 : 20, 180),
+            const Offset(0, 500),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('early')).hitTestable(),
+            findsOneWidget,
+          );
+          h.rebuild(() => h.policy = DayWindowNavigation.paged);
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('early')),
+            findsWidgets,
+            reason: 'Default paging keeps eager builders',
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+  for (final days in [3, 7]) {
+    testWidgets(
+      '$days-day lazy content follows all-day collapse after source reset',
+      (tester) async {
+        final h = await _mount(tester, days);
+        h.data.appointments!.addAll([
+          for (var i = 0; i < 12; i++)
+            Appointment(
+              id: 'wide-$i',
+              isAllDay: true,
+              startTime: DateTime(2026, 9),
+              endTime: DateTime(2026, 12),
+            ),
+        ]);
+        h.data.notifyListeners(
+          CalendarDataSourceAction.reset,
+          h.data.appointments!,
+        );
+        await tester.pumpAndSettle();
+        final collapsed = h.coords!.viewportTopInBody;
+        final minute =
+            (h.coords!.scrollOffset + h.coords!.viewportHeight - 15).floor();
+        h.data.appointments!.add(
+          Appointment(
+            id: 'bottom-event',
+            startTime: DateTime(2026, 10, 20, 0, minute),
+            endTime: DateTime(2026, 10, 20, 0, minute + 15),
+          ),
+        );
+        h.data.notifyListeners(
+          CalendarDataSourceAction.reset,
+          h.data.appointments!,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('bottom-event')).hitTestable(),
+          findsOneWidget,
+        );
+        await tester.tapAt(Offset(20, collapsed - 10));
+        await tester.pumpAndSettle();
+        final expanded = h.coords!.viewportTopInBody;
+        expect(expanded - collapsed, greaterThan(90));
+        h.data.appointments!.add(
+          Appointment(
+            id: 'offscreen-refresh',
+            startTime: DateTime(2026, 10, 20, 1),
+            endTime: DateTime(2026, 10, 20, 2),
+          ),
+        );
+        h.data.notifyListeners(
+          CalendarDataSourceAction.reset,
+          h.data.appointments!,
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('bottom-event')), findsNothing);
+        await tester.tapAt(Offset(20, expanded - 10));
+        await tester.pumpAndSettle();
+        expect(h.coords!.viewportTopInBody, closeTo(collapsed, .1));
+        expect(
+          find.byKey(const ValueKey('bottom-event')).hitTestable(),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   // SF-22: hidden block rulers must not paint; the shared fixed ruler still does.
   for (final days in [3, 7]) {
     for (final rtl in [false, true]) {
@@ -68,10 +289,10 @@ void main() {
       painter('_DayWindowRulerPainter').paint(canvas, const Size(420, 850));
       expect(
         canvas.pictures,
-        hasLength(1),
-        reason: 'the fixed time labels use one retained picture',
+        hasLength(2),
+        reason: 'header and fixed time labels each use one retained picture',
       );
-      return canvas.pictures.single;
+      return canvas.pictures.last;
     }
 
     Future<void> matchesUncached(ui.Picture cached, int height) async {
@@ -139,6 +360,146 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+  // SF-22: cached header pixels must match the native painter for every input.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      testWidgets('$days-day fixed header cache preserves pixels RTL=$rtl', (
+        tester,
+      ) async {
+        final h = await _mount(tester, days, rtl: rtl);
+        Iterable<CustomPainter> painters(String name) => tester
+            .widgetList<CustomPaint>(
+              find.byType(CustomPaint, skipOffstage: false),
+            )
+            .map((widget) => widget.painter)
+            .whereType<CustomPainter>()
+            .where((painter) => painter.runtimeType.toString() == name);
+        ui.Picture headerPicture() {
+          final canvas = _RulerPictureCanvas();
+          painters(
+            '_DayWindowRulerPainter',
+          ).single.paint(canvas, const Size(420, 850));
+          expect(canvas.pictures, hasLength(2));
+          return canvas.pictures.first;
+        }
+
+        CustomPainter nativeHeader() =>
+            painters('_ViewHeaderViewPainter').firstWhere(
+              (painter) =>
+                  ((painter as dynamic).visibleDates as List<DateTime>).first ==
+                  h.coords!.dayWindow!.settledFirstDate,
+            );
+        Future<void> matchesNative(ui.Picture cached) async {
+          final recorder = ui.PictureRecorder();
+          nativeHeader().paint(Canvas(recorder), const Size(420, 50));
+          final native = recorder.endRecording();
+          final pixels = await tester.runAsync(() async {
+            Future<List<int>> rgba(ui.Picture picture) async {
+              final image = await picture.toImage(420, 50);
+              final bytes = await image.toByteData();
+              image.dispose();
+              return bytes!.buffer.asUint8List();
+            }
+
+            return [await rgba(cached), await rgba(native)];
+          });
+          native.dispose();
+          expect(pixels![0], pixels[1], reason: 'native header pixel parity');
+        }
+
+        var previous = headerPicture();
+        expect(headerPicture(), same(previous));
+        await matchesNative(previous);
+        Future<void> refresh() async {
+          await tester.pumpAndSettle();
+          final next = headerPicture();
+          expect(next, isNot(same(previous)));
+          expect(headerPicture(), same(next));
+          await matchesNative(next);
+          previous = next;
+        }
+
+        h.rebuild(() => h.showWeekNumber = true);
+        await refresh();
+        h.controller.displayDate = DateTime(2026, 10, 26, 9);
+        await refresh();
+        h.rebuild(() => h.rulerTextStyle = const TextStyle(fontSize: 16));
+        await refresh();
+        await tester.binding.handleSystemMessage({'type': 'fontsChange'});
+        await refresh();
+        // Hover is a mutable notifier, not a new calendar configuration.
+        final notifier =
+            (nativeHeader() as dynamic).viewHeaderNotifier
+                as ValueNotifier<Offset?>;
+        notifier.value = const Offset(100, 15);
+        await refresh();
+        notifier.value = null;
+        await refresh();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.binding.handleSystemMessage({'type': 'fontsChange'});
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+  // SF-22: the fixed corner follows the logical window after partial settling.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      testWidgets('$days-day partial settlement keeps week-number corner RTL=$rtl',
+          (tester) async {
+        // Week 9 -> 10 remains distinct with Flutter's default test font.
+        final h = await _mount(tester, days,
+            rtl: rtl, displayDate: DateTime(2026, 2, 23, 9));
+        h.rebuild(() => h.showWeekNumber = true);
+        await tester.pumpAndSettle();
+        Future<List<int>> cornerPixels() async {
+          final painter = tester
+              .widgetList<CustomPaint>(find.byType(CustomPaint, skipOffstage: false))
+              .map((widget) => widget.painter)
+              .whereType<CustomPainter>()
+              .singleWhere((painter) =>
+                  painter.runtimeType.toString() == '_DayWindowRulerPainter');
+          final canvas = _RulerPictureCanvas();
+          painter.paint(canvas, const Size(420, 850));
+          return (await tester.runAsync(() async {
+            final image = await canvas.pictures.first.toImage(420, 50);
+            final bytes = (await image.toByteData())!.buffer.asUint8List();
+            image.dispose();
+            final left = rtl ? 378 : 0;
+            return <int>[
+              for (var row = 0; row < 50; row++)
+                ...bytes.sublist((row * 420 + left) * 4,
+                    (row * 420 + left + 42) * 4),
+            ];
+          }))!;
+        }
+
+        final initial = await cornerPixels();
+        final drag = await tester.startGesture(const Offset(210, 400));
+        final sign = rtl ? 1.0 : -1.0;
+        await drag.moveBy(Offset(sign * 20, 0));
+        await tester.pump();
+        await drag.moveBy(Offset(sign * h.column * .8, 0));
+        await tester.pump(const Duration(milliseconds: 500));
+        await drag.up();
+        await tester.pumpAndSettle();
+        final expected = DateTime(2026, 2, 24);
+        expect(h.coords!.dayWindow!.settledFirstDate, expected);
+        final partial = await cornerPixels();
+        // Explicit navigation re-anchors physical blocks to the same logical
+        // window, providing the native reference without relying on cache keys.
+        h.controller.displayDate = DateTime(2026, 2, 24, 9);
+        await tester.pumpAndSettle();
+        expect(h.coords!.dayWindow!.settledFirstDate, expected);
+        final direct = await cornerPixels();
+        expect(initial, isNot(equals(direct)),
+            reason: 'The week-number badge must change across this boundary');
+        expect(partial, direct,
+            reason: 'fixed week-number corner must match the logical window');
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
   // SF-22: nearly identical light swipes must not jump several extra dates
   // when the release velocity crosses the inertia threshold (#4242).
   for (final days in [3, 7]) {
@@ -366,24 +727,24 @@ void main() {
                   find.byType(CustomCalendarScrollView),
                 )
                 .getCalendarState(state);
-            final current = layouts.singleWhere(
-              (layout) =>
-                  layout.visibleDates.first ==
-                  state.currentViewVisibleDates.first,
+            final projected = AppointmentHelper.getVisibleAppointments(
+              state.currentViewVisibleDates.first,
+              state.currentViewVisibleDates.last,
+              AppointmentHelper.generateCalendarAppointments(h.data, h.timeZone),
+              h.timeZone,
+              false,
             );
-            final projected = current.visibleAppointments.value!;
             expect(projected, isNotEmpty);
-            expect(
-              state.visibleAppointments.map(signature).toList(),
-              projected.map(signature).toList(),
-            );
-            expect(state.visibleAppointments, isNot(same(projected)));
-            for (var i = 0; i < projected.length; i++) {
-              expect(
-                state.visibleAppointments[i],
-                same(projected[i]),
-                reason: 'Parent navigation must not expand recurrence again',
-              );
+            expect(state.visibleAppointments.map(signature).toList(),
+                projected.map(signature).toList());
+            for (final layout in layouts) {
+              expect(state.visibleAppointments,
+                  isNot(same(layout.visibleAppointments.value)));
+            }
+            for (final appointment in state.visibleAppointments) {
+              expect(appointment,
+                  same(seen[(appointment.id, appointment.actualStartTime, appointment.actualEndTime)]),
+                  reason: 'Parent navigation must reuse buffered occurrences across seams');
             }
           }
         }
@@ -520,6 +881,7 @@ void main() {
             };
             final before = layouts();
             final initialBuilds = h.appointmentBuilds;
+            final builtBefore = h.builtDates.toSet();
             final offset = h.coords!.scrollOffset;
             final commits = h.windows.length;
             final drag = await tester.startGesture(const Offset(210, 400));
@@ -540,9 +902,11 @@ void main() {
             }
             expect(
               h.appointmentBuilds - initialBuilds,
-              days,
-              reason: 'Only the new block invokes appointmentBuilder',
+              days + 1,
+              reason: 'Only entering viewport and prefetch dates build content',
             );
+            expect(h.builtDates.skip(initialBuilds).any(builtBefore.contains), isFalse,
+                reason: 'Already materialized dates do not rebuild during held travel');
             expect(h.windows.length, commits);
             expect(h.coords!.scrollOffset, closeTo(offset, .5));
             _checkVisibleEvents(tester, h);
@@ -603,8 +967,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(
           h.appointmentBuilds - initialBuilds,
-          days * 2 + (action == CalendarDataSourceAction.add ? 1 : 0),
-          reason: 'Only the affected block invokes appointmentBuilder',
+          2 + (action == CalendarDataSourceAction.add ? 1 : 0),
+          reason: 'Only the prefetch column in the affected block builds content',
         );
         final after = layouts();
         expect(after.keys, unorderedEquals(before.keys));
@@ -637,6 +1001,38 @@ void main() {
         expect(tester.takeException(), isNull);
       }
     });
+  }
+
+  for (final days in [3, 7]) {
+    for (final allDay in [false, true]) {
+      testWidgets('$days-day sole value-equal event refreshes builder state allDay=$allDay',
+          (tester) async {
+        final h = await _mount(tester, days);
+        h.showSubjects = true;
+        final event = Appointment(
+          id: 'sole-event',
+          subject: 'Event',
+          isAllDay: allDay,
+          startTime: DateTime(2026, 10, 20, allDay ? 0 : 10),
+          endTime: DateTime(2026, 10, 20, allDay ? 23 : 11),
+        );
+        h.data.appointments = [event];
+        h.data.notifyListeners(CalendarDataSourceAction.reset, [event]);
+        await tester.pumpAndSettle();
+        expect(find.text('Event'), findsOneWidget);
+        final calendar = tester.widget<SfCalendar>(find.byType(SfCalendar));
+        h.builderSuffix = ' completed';
+        h.data.appointments = [];
+        h.data.notifyListeners(CalendarDataSourceAction.remove, [event]);
+        h.data.appointments = [event];
+        h.data.notifyListeners(CalendarDataSourceAction.add, [event]);
+        await tester.pumpAndSettle();
+        expect(find.text('Event completed'), findsOneWidget);
+        expect(find.text('Event'), findsNothing);
+        expect(tester.widget<SfCalendar>(find.byType(SfCalendar)), same(calendar));
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 
   testWidgets('value-equal remove/add still rebuilds the notified event', (
@@ -779,7 +1175,8 @@ void main() {
             reason: 'Unchanged recurrence instances must keep $date mounted',
           );
         }
-        expect(h.appointmentBuilds - builds, days);
+        expect(h.appointmentBuilds - builds, direction == -1 ? days + 1 : days,
+            reason: 'Build only dates newly entering the prefetch band');
         for (final layout in after.values) {
           expect(
             layout.visibleAppointments.value!.map((a) => a.actualStartTime),
@@ -833,7 +1230,7 @@ void main() {
       final after = occurrences();
       expect(after.length, days * 3);
       final retained = after.keys.where(before.containsKey).toList();
-      expect(retained.length, days * 3 - 1);
+      expect(retained.length, days * 3);
       for (final date in retained) {
         expect(
           identical(after[date], before[date]),
@@ -889,6 +1286,8 @@ void main() {
       (tester) async {
         final h = await _mount(tester, days);
         final initialBuilds = h.appointmentBuilds;
+        final builtBefore = h.builtDates.toSet();
+        final layoutsBefore = tester.widgetList<AppointmentLayout>(find.byType(AppointmentLayout)).toList();
         final drag = await tester.startGesture(const Offset(350, 400));
         await drag.moveBy(const Offset(-20, 0));
         await tester.pump();
@@ -896,10 +1295,17 @@ void main() {
         await drag.moveBy(Offset(-insideBlockDistance, 0));
         await tester.pump(const Duration(milliseconds: 300));
         expect(
-          h.appointmentBuilds,
-          initialBuilds,
-          reason: 'A partial block shift must translate retained date children',
+          h.appointmentBuilds - initialBuilds,
+          days - 1,
+          reason: 'Only newly entering prefetch dates build during a partial shift',
         );
+        expect(h.builtDates.skip(initialBuilds).any(builtBefore.contains), isFalse,
+            reason: 'Existing event content is not rebuilt by horizontal motion');
+        final layoutsAfter = tester.widgetList<AppointmentLayout>(find.byType(AppointmentLayout)).toList();
+        for (var i = 0; i < layoutsBefore.length; i++) {
+          expect(identical(layoutsBefore[i], layoutsAfter[i]), isTrue,
+              reason: 'Partial travel retains all date-block layouts');
+        }
         _checkVisibleEvents(tester, h);
 
         await drag.moveBy(Offset(-h.column * .4, 0));
@@ -1921,6 +2327,10 @@ class _Harness {
   int firstDayOfWeek = 1;
   SfCalendarTimelineCoordinates? coords;
   int appointmentBuilds = 0;
+  final builtDates = <DateTime>[];
+  bool showSubjects = false;
+  String builderSuffix = '';
+  bool showWeekNumber = false;
   double get column => 378 / days;
 }
 
@@ -1988,6 +2398,7 @@ Future<_Harness> _mount(
                   headerHeight: 0,
                   viewHeaderHeight: 50,
                   showCurrentTimeIndicator: false,
+                  showWeekNumber: h.showWeekNumber,
                   cellEndPadding: 0,
                   preserveTimelineScaleOffset: true,
                   allDayPanelChronologicalSort: true,
@@ -1995,6 +2406,7 @@ Future<_Harness> _mount(
                   timeZone: h.timeZone,
                   appointmentBuilder: (context, details) {
                     h.appointmentBuilds++;
+                    h.builtDates.add(DateUtils.dateOnly(details.date));
                     return ColoredBox(
                       key:
                           details.appointments.length == 1
@@ -2004,6 +2416,12 @@ Future<_Harness> _mount(
                               )
                               : null,
                       color: Colors.blue,
+                      child: h.showSubjects
+                          ? Text(
+                              (details.appointments.single as Appointment).subject + h.builderSuffix,
+                              maxLines: 1,
+                            )
+                          : null,
                     );
                   },
                   onViewChanged: (value) => h.windows.add(value.visibleDates),

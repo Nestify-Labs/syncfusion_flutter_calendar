@@ -10431,7 +10431,7 @@ class _SfCalendarState extends State<SfCalendar>
       _isNeedLoadMore = widget.loadMoreWidgetBuilder != null;
       // SF-22: keep the parent's mutable list separate from the block cache.
       _updateVisibleAppointments(
-        preparedAppointments: details.transientDayWindow
+        preparedAppointments: (details.transientDayWindow || details.commitDayWindow)
             ? List<CalendarAppointment>.of(details.visibleAppointments)
             : null,
       );

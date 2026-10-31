@@ -130,9 +130,14 @@ class _DayWindowAppointments {
   }
   // SF-22: a new neighbor can change all-day lanes without changing events.
   bool hasSameLayout(_DayWindowAppointments other) {
-    if (!CalendarViewHelper.isCollectionEqual(visible, other.visible) ||
+    if (visible.length != other.visible.length ||
         views.length != other.views.length)
       return false;
+    // SF-22: a source notification may refresh builder-only state while all
+    // appointment values remain equal. Unchanged occurrences retain identity.
+    for (int i = 0; i < visible.length; i++) {
+      if (!identical(visible[i], other.visible[i])) return false;
+    }
     for (int i = 0; i < views.length; i++) {
       final AppointmentView a = views[i], b = other.views[i];
       if (!identical(a.appointment, b.appointment) ||
@@ -204,6 +209,24 @@ extension _DayWindowData on _CustomCalendarScrollViewState {
     // Do not retain that projection in the bounded current-buffer cache.
     return _dayWindowAppointmentCache[dates.first] ??
         _DayWindowAppointments(dates, appointments, widget.calendar);
+  }
+
+  // SF-22: publish a logical window without constructing unused all-day lanes.
+  List<CalendarAppointment> _dayWindowVisibleAppointments(List<DateTime> dates) {
+    _dayWindowAppointments(_currentViewVisibleDates);
+    final _DayWindowAppointments? block = _dayWindowAppointmentCache[dates.first];
+    if (block != null) {
+      return block.visible;
+    }
+    final List<List<DateTime>> blocks = <List<DateTime>>[
+      _previousViewVisibleDates, _currentViewVisibleDates, _nextViewVisibleDates,
+    ]..sort((List<DateTime> a, List<DateTime> b) => a.first.compareTo(b.first));
+    final DateTime start = AppointmentHelper.convertToStartTime(dates.first);
+    final DateTime end = AppointmentHelper.convertToEndTime(dates.last);
+    return _expandDayWindowEdges(blocks, _dayWindowAppointmentSource!)
+        .where((CalendarAppointment appointment) =>
+            AppointmentHelper.isAppointmentWithinVisibleDateRange(
+                appointment, start, end)).toList();
   }
 
   // SF-22: retain occurrence instances over the intersection of the buffers,

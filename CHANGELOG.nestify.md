@@ -4,6 +4,16 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
 
+- SF-22 (#4241): keep the fixed week-number corner aligned with the logical window after partial-day settlement, including RTL.
+
+- SF-22 (#4241, candidate): refresh continuous builders on value-equal source notifications by projection identity, allowing hosts to retain unrelated date blocks without replacing the calendar configuration; paged comparison is unchanged.
+
+- SF-22 (#4241, candidate): cache the fixed header display list across motion, invalidating on configuration, dates, hover, geometry, today and system-font changes; native pixels and default paging remain unchanged.
+
+- SF-22 (#4241, candidate): preserve mounted date-block layouts at partial-day settlement while publishing the logical window and reusing its prepared occurrences; direct navigation, bounds and default paging retain their contracts.
+
+- SF-22 (#4241, candidate): build timed-event content only near continuous 3/7-day horizontal and vertical viewports, retaining complete geometry and refreshing on horizontal/vertical scroll, all-day resize, source and style changes; default paging remains eager.
+
 - SF-22 (#4241, candidate): reuse the current date block's prepared occurrences in the parent calendar during navigation, keeping independent mutable lists and the existing all-day/source-refresh paths.
 
 - SF-22 (#4241, candidate): keep clipped date-block rulers offstage in continuous views, retaining their layout while painting the shared fixed ruler; paged and unsupported views still paint native rulers.
@@ -32,7 +42,7 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 - SF-22: compare adjacent continuous blocks against their own appointment projections so movement alone retains their layouts; data notifications, timezone readiness, and calendar configuration changes still refresh them.
 
-- SF-22: retain the mounted three-block date buffer during fractional and single-day travel, rebuilding appointment children only at a full block boundary or final settlement.
+- SF-22: retain the mounted three-block date buffer during fractional and single-day travel, rebuilding appointment children only at a full block boundary or invalidation, including retained partial-day settlement.
 
 - SF-22: preserve explicit Today/weekday navigation during geometry rebuilds and retire deactivated shared-controller listeners during host scope replacement.
 

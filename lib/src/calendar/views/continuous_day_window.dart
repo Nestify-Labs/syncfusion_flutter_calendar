@@ -53,6 +53,17 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
       _dayWindowStride / _currentViewVisibleDates.length;
   double get _dayDirection => widget.isRTL ? -1 : 1;
 
+  // SF-22: idle consumers see the committed window across physical block seams.
+  List<DateTime> get _dayWindowCoordinateDates {
+    final DateTime? first = _settledDayWindowFirst;
+    if (_dayWindowPhase != DayWindowPhase.idle || first == null ||
+        first == _currentViewVisibleDates.first) {
+      return _currentViewVisibleDates;
+    }
+    return List<DateTime>.generate(_currentViewVisibleDates.length,
+        (int i) => _dayDate(first, i), growable: false);
+  }
+
   DayWindowSnapshot? get _dayWindowSnapshot {
     if (!_usesContinuousDayWindow) {
       return null;
@@ -429,25 +440,25 @@ extension _ContinuousDayWindow on _CustomCalendarScrollViewState {
   }
 
   void _commitDayWindow() {
-    final double oldPanelHeight = _dayWindowPanelHeight;
+    // SF-22: keep the physical buffer and its snapped translation. Publishing
+    // a logical window must not regroup every mounted block after a one-day move.
     final int remaining =
         (-_position / _dayColumnWidth * _dayDirection).round();
-    if (remaining != 0) {
-      _setDayWindowDates(_dayDate(_currentViewVisibleDates.first, remaining));
-    }
-    _position = 0;
-    if (oldPanelHeight != _dayWindowPanelHeight) {
-      _children.clear();
-      _currentViewKey.currentState?._readPageCalendarState();
-      _currentViewKey.currentState?._updateAllDayHeight(true);
-    }
+    _position = -remaining * _dayColumnWidth * _dayDirection;
+    final DateTime first = _dayDate(_currentViewVisibleDates.first, remaining);
+    final List<DateTime> settledDates = remaining == 0
+        ? _currentViewVisibleDates
+        : List<DateTime>.generate(_currentViewVisibleDates.length,
+            (int i) => _dayDate(first, i), growable: false);
+    final List<CalendarAppointment> visibleAppointments =
+        _dayWindowVisibleAppointments(settledDates);
     _dayWindowPhase = DayWindowPhase.idle;
-    _settledDayWindowFirst = _currentViewVisibleDates.first;
+    _settledDayWindowFirst = first;
     _publishDayWindowCoordinates();
     widget.getCalendarState(_updateCalendarStateDetails);
-    _updateCalendarStateDetails.currentDate = _currentViewVisibleDates.first;
-    _updateCalendarStateDetails.currentViewVisibleDates =
-        _currentViewVisibleDates;
+    _updateCalendarStateDetails.currentDate = first;
+    _updateCalendarStateDetails.currentViewVisibleDates = settledDates;
+    _updateCalendarStateDetails.visibleAppointments = visibleAppointments;
     _updateCalendarStateDetails.commitDayWindow = true;
     widget.updateCalendarState(_updateCalendarStateDetails);
     _updateCalendarStateDetails.commitDayWindow = false;
@@ -573,34 +584,67 @@ class _DayWindowRulerPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTWH(left, 0, ruler, size.height), background);
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(left, 0, ruler, actualViewHeaderHeight));
-    _ViewHeaderViewPainter(
-      owner._currentViewVisibleDates,
-      widget.view,
-      widget.calendar.viewHeaderStyle,
-      widget.calendar.timeSlotViewSettings,
-      CalendarViewHelper.getTimeLabelWidth(
-        widget.calendar.timeSlotViewSettings.timeRulerSize,
+    final Size headerSize = Size(size.width, actualViewHeaderHeight);
+    final List<DateTime> headerDates = owner._dayWindowCoordinateDates;
+    final DateTime today = DateTime.now();
+    final Offset? hover = page._viewHeaderNotifier.value;
+    _DayWindowHeaderCache? header = owner._dayWindowHeaderCache;
+    // SF-22: the immutable widget owns all style/locale/config inputs. Snapshot
+    // dates, hover and today's date separately because they change in place.
+    if (header == null ||
+        !header.matches(
+          widget,
+          headerDates,
+          headerSize,
+          hover,
+          today,
+        )) {
+      final _ViewHeaderViewPainter painter = _ViewHeaderViewPainter(
+        headerDates,
         widget.view,
-      ),
-      actualViewHeaderHeight,
-      widget.calendar.monthViewSettings,
-      isRTL,
-      widget.locale,
-      widget.calendarTheme,
-      widget.themeData,
-      widget.calendar.todayHighlightColor ??
-          widget.calendarTheme.todayHighlightColor,
-      widget.calendar.todayTextStyle,
-      widget.calendar.cellBorderColor,
-      widget.calendar.minDate,
-      widget.calendar.maxDate,
-      page._viewHeaderNotifier,
-      widget.textScaleFactor,
-      widget.calendar.showWeekNumber,
-      widget.isMobilePlatform,
-      widget.calendar.weekNumberStyle,
-      widget.localizations,
-    ).paint(canvas, Size(size.width, actualViewHeaderHeight));
+        widget.calendar.viewHeaderStyle,
+        widget.calendar.timeSlotViewSettings,
+        CalendarViewHelper.getTimeLabelWidth(
+          widget.calendar.timeSlotViewSettings.timeRulerSize,
+          widget.view,
+        ),
+        actualViewHeaderHeight,
+        widget.calendar.monthViewSettings,
+        isRTL,
+        widget.locale,
+        widget.calendarTheme,
+        widget.themeData,
+        widget.calendar.todayHighlightColor ??
+            widget.calendarTheme.todayHighlightColor,
+        widget.calendar.todayTextStyle,
+        widget.calendar.cellBorderColor,
+        widget.calendar.minDate,
+        widget.calendar.maxDate,
+        page._viewHeaderNotifier,
+        widget.textScaleFactor,
+        widget.calendar.showWeekNumber,
+        widget.isMobilePlatform,
+        widget.calendar.weekNumberStyle,
+        widget.localizations,
+      );
+
+      final ui.PictureRecorder recorder = ui.PictureRecorder();
+      painter.paint(Canvas(recorder), headerSize);
+      final ui.Picture picture = recorder.endRecording();
+      painter._dayTextPainter.dispose();
+      painter._dateTextPainter.dispose();
+      header?.picture.dispose();
+      header = _DayWindowHeaderCache(
+        widget,
+        List<DateTime>.of(headerDates),
+        headerSize,
+        hover,
+        today,
+        picture,
+      );
+      owner._dayWindowHeaderCache = header;
+    }
+    canvas.drawPicture(header.picture);
     canvas.restore();
     if (top > actualViewHeaderHeight) {
       background.color =
@@ -691,4 +735,35 @@ class _DayWindowRulerPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DayWindowRulerPainter oldDelegate) => true;
+}
+
+// SF-22: one header display list per scroll view, released with its ruler cache.
+class _DayWindowHeaderCache {
+  _DayWindowHeaderCache(
+    this.widget,
+    this.dates,
+    this.size,
+    this.hover,
+    this.today,
+    this.picture,
+  );
+  final CustomCalendarScrollView widget;
+  final List<DateTime> dates;
+  final Size size;
+  final Offset? hover;
+  final DateTime today;
+  final ui.Picture picture;
+
+  bool matches(
+    CustomCalendarScrollView nextWidget,
+    List<DateTime> nextDates,
+    Size nextSize,
+    Offset? nextHover,
+    DateTime nextToday,
+  ) =>
+      identical(widget, nextWidget) &&
+      CalendarViewHelper.isCollectionEqual(dates, nextDates) &&
+      size == nextSize &&
+      hover == nextHover &&
+      isSameDate(today, nextToday);
 }

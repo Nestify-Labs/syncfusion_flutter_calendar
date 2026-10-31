@@ -313,6 +313,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   ui.Picture? _dayWindowRulerPicture;
   _TimeRulerView? _dayWindowRulerDelegate;
   Size? _dayWindowRulerSize;
+  // SF-22: reuse the fixed header while its complete paint inputs agree.
+  _DayWindowHeaderCache? _dayWindowHeaderCache;
   final Map<DateTime, _DayWindowAppointments> _dayWindowAppointmentCache = <DateTime, _DayWindowAppointments>{};
   List<CalendarAppointment>? _dayWindowAppointmentSource;
   bool _dayWindowSyncingVertical = false;
@@ -325,6 +327,8 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   void _clearDayWindowRuler() {
     _dayWindowRulerPicture?.dispose();
     _dayWindowRulerPicture = null;
+    _dayWindowHeaderCache?.picture.dispose();
+    _dayWindowHeaderCache = null;
     _dayWindowRulerDelegate = null;
     _dayWindowRulerSize = null;
     _dayWindowRulerRepaint.value++;
@@ -1070,6 +1074,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     PaintingBinding.instance.systemFonts.removeListener(_clearDayWindowRuler);
     _dayWindowRulerRepaint.dispose();
     _dayWindowRulerPicture?.dispose();
+    _dayWindowHeaderCache?.picture.dispose();
     _timelineViewportTop.dispose();
     _animationController.dispose();
     _animation.removeListener(animationListener);
@@ -6912,6 +6917,9 @@ class _CalendarViewState extends State<_CalendarView>
   /// the appointment layout then each of the time it creates new appointment
   /// layout rather than update the existing appointment layout.
   final GlobalKey _appointmentLayoutKey = GlobalKey();
+  // SF-22: extent changes also refresh lazily built timed content.
+  final ValueNotifier<double> _dayWindowViewportMetrics =
+      ValueNotifier<double>(0);
 
   Timer? _timer, _autoScrollTimer;
   late ValueNotifier<int> _currentTimeNotifier;
@@ -7216,6 +7224,25 @@ class _CalendarViewState extends State<_CalendarView>
       ? (_isExpanded ? _updateCalendarStateDetails.allDayPanelHeight : _allDayHeight)
       : _effectiveTimelineViewportTop - header;
 
+  // SF-22: omit distant buffered card content while retaining native geometry.
+  // Use the same block translation as DayWindowScrollLayout, plus one column
+  // of prefetch so ordinary horizontal motion exposes already built content.
+  bool _isNearDayWindowViewport(
+    _CustomCalendarScrollViewState owner, Rect bounds,
+  ) {
+    if (!owner._usesContinuousDayWindow) {
+      return true;
+    }
+    final double column = owner._dayColumnWidth;
+    final double translation = owner._position +
+        owner._dayDistance(owner._currentViewVisibleDates.first,
+            widget.visibleDates.first) * column * owner._dayDirection;
+    final double left = owner.widget.isRTL ? 0 : widget.width - owner._dayWindowStride;
+    final double right = owner.widget.isRTL ? owner._dayWindowStride : widget.width;
+    return bounds.right + translation > left - column &&
+        bounds.left + translation < right + column;
+  }
+
   Widget _positionTimelineViewport(Widget child, double fallbackTop) {
     final _CustomCalendarScrollViewState? owner = _timelineViewportOwner;
     if (owner == null) {
@@ -7293,7 +7320,7 @@ class _CalendarViewState extends State<_CalendarView>
       // SF-22: horizontal and vertical truth travel in one snapshot.
       dayWindow: _timelineViewportOwner?._dayWindowSnapshot,
       visibleDates: _timelineViewportOwner?._usesContinuousDayWindow == true
-          ? _timelineViewportOwner!._currentViewVisibleDates : widget.visibleDates,
+          ? _timelineViewportOwner!._dayWindowCoordinateDates : widget.visibleDates,
       viewportWidth: viewportWidthPerColumn,
       viewportHeight: pos.viewportDimension,
       // SF-21: the prepared scale snapshot uses the next content height;
@@ -7322,10 +7349,16 @@ class _CalendarViewState extends State<_CalendarView>
   // SF-21: extent changes do not notify ScrollController when pixels stay
   // unchanged. Publish the measured layout after the prepared scale snapshot.
   Widget _observeTimelineMetrics(Widget child) {
-    if (widget.calendar.onTimelineCoordinatesChanged == null) return child;
+    if (widget.calendar.onTimelineCoordinatesChanged == null &&
+        !_continuousDayBlock) {
+      return child;
+    }
     return NotificationListener<ScrollMetricsNotification>(
       onNotification: (ScrollMetricsNotification notification) {
         if (notification.depth == 0) {
+          if (_continuousDayBlock) {
+            _dayWindowViewportMetrics.value = notification.metrics.viewportDimension;
+          }
           _readPageCalendarState();
           _pushTimelineCoordinatesForCurrentView();
         }
@@ -7518,6 +7551,7 @@ class _CalendarViewState extends State<_CalendarView>
 
   @override
   void dispose() {
+    _dayWindowViewportMetrics.dispose();
     _viewHeaderNotifier.removeListener(_timelineViewHoveringUpdate);
 
     _calendarCellNotifier.removeListener(_timelineViewHoveringUpdate);
@@ -8449,6 +8483,8 @@ class _CalendarViewState extends State<_CalendarView>
                 _updateCalendarStateDetails.currentViewVisibleDates
             ? _updateCalendarStateDetails.visibleAppointments
             : null;
+    final _CustomCalendarScrollViewState? viewportOwner =
+        _continuousDayBlock ? _timelineViewportOwner : null;
     _appointmentLayout = AppointmentLayout(
       widget.calendar,
       widget.view,
@@ -8468,6 +8504,23 @@ class _CalendarViewState extends State<_CalendarView>
       widget.localizations,
       _getPainterProperties,
       key: _appointmentLayoutKey,
+      // SF-22: virtualize builder content only for continuous timed blocks.
+      viewportController: _continuousDayBlock ? _scrollController : null,
+      isNearHorizontalViewport:
+          viewportOwner == null
+              ? null
+              : (Rect bounds) => _isNearDayWindowViewport(viewportOwner, bounds),
+      viewportHeight: _continuousDayBlock
+          ? () => math.max(0, widget.height - _effectiveTimelineViewportTop)
+          : null,
+      viewportChanges: _continuousDayBlock
+          ? Listenable.merge(<Listenable?>[
+              _scrollController,
+              viewportOwner?._timelineViewportTop,
+              _dayWindowViewportMetrics,
+              viewportOwner?._dayWindowRulerRepaint,
+            ])
+          : null,
     );
 
     return _appointmentLayout;

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:syncfusion_flutter_core/core.dart';
 import 'package:syncfusion_flutter_core/localizations.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
@@ -39,10 +40,21 @@ class AppointmentLayout extends StatefulWidget {
     this.localizations,
     this.updateCalendarState, {
     Key? key,
+    this.viewportController,
+    this.viewportHeight,
+    this.viewportChanges,
+    this.isNearHorizontalViewport,
   }) : super(key: key);
 
   /// Holds the calendar instance used the get the properties of calendar.
   final SfCalendar calendar;
+
+  // SF-22: continuous blocks keep geometry for all events but build content
+  // only near the vertical viewport. Null retains native eager behavior.
+  final ScrollController? viewportController;
+  final double Function()? viewportHeight;
+  final Listenable? viewportChanges;
+  final bool Function(Rect)? isNearHorizontalViewport;
 
   /// Defines the current calendar view of the calendar widget.
   final CalendarView view;
@@ -179,11 +191,16 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
     if (widget.visibleAppointments != oldWidget.visibleAppointments) {
       oldWidget.visibleAppointments.removeListener(_updateVisibleAppointment);
       widget.visibleAppointments.addListener(_updateVisibleAppointment);
-      if (!CalendarViewHelper.isCollectionEqual(
-            widget.visibleAppointments.value,
-            oldWidget.visibleAppointments.value,
-          ) &&
-          !isAppointmentDetailsUpdated) {
+      // SF-22: continuous blocks retain their projection list until a source
+      // notification invalidates it, even for value-equal builder data.
+      final bool appointmentsChanged = widget.viewportController != null
+          ? !identical(widget.visibleAppointments.value,
+              oldWidget.visibleAppointments.value)
+          : !CalendarViewHelper.isCollectionEqual(
+              widget.visibleAppointments.value,
+              oldWidget.visibleAppointments.value,
+            );
+      if (appointmentsChanged && !isAppointmentDetailsUpdated) {
         _updateAppointmentDetails();
       }
     }
@@ -235,31 +252,43 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
                 ? initialVisibleDate
                 : appStartTime;
 
-        final Widget child = widget.calendar.appointmentBuilder!(
-          context,
-          CalendarAppointmentDetails(
-            date,
-            List<dynamic>.unmodifiable(<dynamic>[
-              CalendarViewHelper.getAppointmentDetail(
-                appointmentView.appointment!,
-                widget.calendar.dataSource,
-              ),
-            ]),
-            Rect.fromLTWH(
-              appointmentView.appointmentRect!.left,
-              appointmentView.appointmentRect!.top,
-              appointmentView.appointmentRect!.width,
-              appointmentView.appointmentRect!.height,
+        final CalendarAppointmentDetails details = CalendarAppointmentDetails(
+          date,
+          List<dynamic>.unmodifiable(<dynamic>[
+            CalendarViewHelper.getAppointmentDetail(
+              appointmentView.appointment!,
+              widget.calendar.dataSource,
             ),
-            // SF-20: reuse the finalized lane allocator result instead of
-            // making appointmentBuilder clients reconstruct collisions.
-            isOverlapping:
-                (widget.view == CalendarView.day ||
-                    widget.view == CalendarView.week ||
-                    widget.view == CalendarView.workWeek) &&
-                appointmentView.maxPositions > 1,
+          ]),
+          Rect.fromLTWH(
+            appointmentView.appointmentRect!.left,
+            appointmentView.appointmentRect!.top,
+            appointmentView.appointmentRect!.width,
+            appointmentView.appointmentRect!.height,
           ),
+          // SF-20: reuse the finalized lane allocator result instead of
+          // making appointmentBuilder clients reconstruct collisions.
+          isOverlapping:
+              (widget.view == CalendarView.day ||
+                  widget.view == CalendarView.week ||
+                  widget.view == CalendarView.workWeek) &&
+              appointmentView.maxPositions > 1,
         );
+        final appointmentBuilder = widget.calendar.appointmentBuilder!;
+        final Widget child =
+            widget.viewportController == null
+                ? appointmentBuilder(context, details)
+                : _DayWindowAppointmentContent(
+                  controller: widget.viewportController!,
+                  viewportHeight: widget.viewportHeight!,
+                  changes: widget.viewportChanges!,
+                  bounds: details.bounds,
+                  isNearHorizontalViewport: widget.isNearHorizontalViewport!,
+                  cacheExtent: widget.timeIntervalHeight,
+                  builder:
+                      (BuildContext context) =>
+                          appointmentBuilder(context, details),
+                );
 
         _children.add(RepaintBoundary(child: child));
       }
@@ -4226,4 +4255,105 @@ class _CascadeLeafLaneAssignment {
 
   final _CascadeNode node;
   final int lane;
+}
+
+// SF-22: scrolling only rebuilds tiles that enter or leave the viewport margin.
+// Source/style/geometry updates still replace the builder through didUpdateWidget.
+class _DayWindowAppointmentContent extends StatefulWidget {
+  const _DayWindowAppointmentContent({
+    required this.controller,
+    required this.viewportHeight,
+    required this.changes,
+    required this.bounds,
+    required this.isNearHorizontalViewport,
+    required this.cacheExtent,
+    required this.builder,
+  });
+
+  final ScrollController controller;
+  final double Function() viewportHeight;
+  final Listenable changes;
+  final Rect bounds;
+  final bool Function(Rect) isNearHorizontalViewport;
+  final double cacheExtent;
+  final WidgetBuilder builder;
+
+  @override
+  State<_DayWindowAppointmentContent> createState() =>
+      _DayWindowAppointmentContentState();
+}
+
+class _DayWindowAppointmentContentState
+    extends State<_DayWindowAppointmentContent> {
+  late bool _visible;
+  bool _refreshPending = false;
+
+  bool get _isNearViewport {
+    final double offset =
+        widget.controller.hasClients
+            ? widget.controller.offset
+            : widget.controller.initialScrollOffset;
+    return widget.isNearHorizontalViewport(widget.bounds) &&
+        widget.bounds.bottom >= offset - widget.cacheExtent &&
+        widget.bounds.top <=
+            offset + widget.viewportHeight() + widget.cacheExtent;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _visible = _isNearViewport;
+    widget.changes.addListener(_refreshVisibility);
+    // The initial ScrollPosition can attach after this child first builds.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _refreshVisibility();
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(_DayWindowAppointmentContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.changes != widget.changes) {
+      oldWidget.changes.removeListener(_refreshVisibility);
+      widget.changes.addListener(_refreshVisibility);
+    }
+    _visible = _isNearViewport;
+  }
+
+  void _refreshVisibility() {
+    // SF-22: coordinates may also publish during an ancestor build. Children
+    // read live geometry when built; defer notifications for other subtrees.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      if (!_refreshPending) {
+        _refreshPending = true;
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          _refreshPending = false;
+          if (mounted) {
+            _refreshVisibility();
+          }
+        });
+      }
+      return;
+    }
+    final bool visible = _isNearViewport;
+    if (_visible == visible) {
+      return;
+    }
+    setState(() => _visible = visible);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _visible = _isNearViewport;
+    return _visible ? widget.builder(context) : const SizedBox.shrink();
+  }
+
+  @override
+  void dispose() {
+    widget.changes.removeListener(_refreshVisibility);
+    super.dispose();
+  }
 }
