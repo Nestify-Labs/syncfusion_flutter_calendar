@@ -4,6 +4,8 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
 
+- SF-22 (#4241): reuse continuous fixed time-ruler pictures across dates with identical normalized labels, preserving date-format/DST and configuration invalidation.
+
 - SF-22 (#4241): reserve the collapsed overflow row when a spanning all-day event reaches a more crowded later date, preventing the native count from painting over its title in continuous 3/7-day views.
 
 

@@ -706,6 +706,7 @@ class _DayWindowRulerPainter extends CustomPainter {
       false,
       owner._currentViewVisibleDates,
       widget.textScaleFactor,
+      reuseUnchangedDateLabels: true,
     );
     final Size rulerSize = Size(
       ruler,
@@ -713,7 +714,7 @@ class _DayWindowRulerPainter extends CustomPainter {
     );
     final _TimeRulerView? previous = owner._dayWindowRulerDelegate;
     // SF-22: scrolling translates the same fixed labels. Keep one display list
-    // until date/locale/theme/scale/geometry changes; release it with the owner.
+    // until labels/locale/theme/scale/geometry change; release it with the owner.
     if (owner._dayWindowRulerPicture == null ||
         owner._dayWindowRulerSize != rulerSize ||
         previous == null ||
@@ -725,9 +726,11 @@ class _DayWindowRulerPainter extends CustomPainter {
       final ui.Picture picture = recorder.endRecording();
       owner._dayWindowRulerPicture?.dispose();
       owner._dayWindowRulerPicture = picture;
-      owner._dayWindowRulerDelegate = rulerPainter;
       owner._dayWindowRulerSize = rulerSize;
     }
+    // SF-22: advance the date snapshot on cache hits as well, so comparing
+    // normalized labels happens once per date change rather than every frame.
+    owner._dayWindowRulerDelegate = rulerPainter;
     rulerPainter._textPainter.dispose();
     canvas.drawPicture(owner._dayWindowRulerPicture!);
     canvas.restore();

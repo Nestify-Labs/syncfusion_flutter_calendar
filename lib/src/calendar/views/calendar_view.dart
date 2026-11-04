@@ -15573,9 +15573,12 @@ class _TimeRulerView extends CustomPainter {
     this.calendarTheme,
     this.isTimelineView,
     this.visibleDates,
-    this.textScaleFactor,
-  );
+    this.textScaleFactor, {
+    this.reuseUnchangedDateLabels = false,
+  });
 
+  // SF-22: opt-in only for the continuous view's fixed vertical ruler.
+  final bool reuseUnchangedDateLabels;
   final double horizontalLinesCount;
   final double timeIntervalHeight;
   final TimeSlotViewSettings timeSlotViewSettings;
@@ -15618,10 +15621,6 @@ class _TimeRulerView extends CustomPainter {
 
     final TextStyle timeTextStyle = calendarTheme.timeTextStyle!;
 
-    final double hour =
-        (timeSlotViewSettings.startHour -
-            timeSlotViewSettings.startHour.toInt()) *
-        60;
     if (isTimelineView) {
       canvas.drawLine(Offset.zero, Offset(size.width, 0), _linePainter);
       final double timelineViewWidth =
@@ -15632,7 +15631,6 @@ class _TimeRulerView extends CustomPainter {
           canvas,
           size,
           date,
-          hour,
           xPosition,
           yPosition,
           timeTextStyle,
@@ -15648,7 +15646,6 @@ class _TimeRulerView extends CustomPainter {
         canvas,
         size,
         date,
-        hour,
         xPosition,
         yPosition,
         timeTextStyle,
@@ -15662,7 +15659,6 @@ class _TimeRulerView extends CustomPainter {
     Canvas canvas,
     Size size,
     DateTime date,
-    double hour,
     double xPosition,
     double yPosition,
     TextStyle timeTextStyle,
@@ -15697,14 +15693,7 @@ class _TimeRulerView extends CustomPainter {
         );
       }
 
-      final double minute = (i * timeInterval) + hour;
-      date = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        timeSlotViewSettings.startHour.toInt(),
-        minute.toInt(),
-      );
+      date = _timeLabelDate(date, i, timeInterval);
       final String time = CalendarViewHelper.getLocalizedString(
         date,
         timeFormatStrings,
@@ -15764,6 +15753,45 @@ class _TimeRulerView extends CustomPainter {
     }
   }
 
+  // SF-22: painting and cache comparison share the native slot normalization.
+  DateTime _timeLabelDate(DateTime date, int index, int interval) {
+    final double startHour = timeSlotViewSettings.startHour;
+    final double minute = index * interval + (startHour - startHour.toInt()) * 60;
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+      startHour.toInt(),
+      minute.toInt(),
+    );
+  }
+
+  // SF-22: dates can change while every painted time string stays identical.
+  // Follow _drawTimeLabels' date normalization, including DST and date formats.
+  bool _dateLabelsChanged(_TimeRulerView previous) {
+    if (identical(previous.visibleDates, visibleDates)) {
+      return false;
+    }
+    if (!reuseUnchangedDateLabels || isTimelineView) {
+      return true;
+    }
+    DateTime oldDate = previous.visibleDates.first;
+    DateTime newDate = visibleDates.first;
+    final int interval = CalendarViewHelper.getTimeInterval(timeSlotViewSettings);
+    final List<String> format = CalendarViewHelper.getListFromString(
+      timeSlotViewSettings.timeFormat,
+    );
+    for (int i = 1; i <= horizontalLinesCount; i++) {
+      oldDate = _timeLabelDate(oldDate, i, interval);
+      newDate = _timeLabelDate(newDate, i, interval);
+      if (CalendarViewHelper.getLocalizedString(oldDate, format, locale) !=
+          CalendarViewHelper.getLocalizedString(newDate, format, locale)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   @override
   bool shouldRepaint(_TimeRulerView oldDelegate) {
     final _TimeRulerView oldWidget = oldDelegate;
@@ -15772,7 +15800,8 @@ class _TimeRulerView extends CustomPainter {
         oldWidget.calendarTheme != calendarTheme ||
         oldWidget.isRTL != isRTL ||
         oldWidget.locale != locale ||
-        oldWidget.visibleDates != visibleDates ||
+        oldWidget.reuseUnchangedDateLabels != reuseUnchangedDateLabels ||
+        _dateLabelsChanged(oldWidget) ||
         oldWidget.isTimelineView != isTimelineView ||
         oldWidget.textScaleFactor != textScaleFactor;
   }

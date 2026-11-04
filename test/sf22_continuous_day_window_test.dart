@@ -1,4 +1,6 @@
+import 'dart:io' show Platform;
 import 'dart:ui' as ui;
+
 // SF-22: product-level day-window gestures, independent of private page state.
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -619,8 +621,35 @@ void main() {
     h.controller.displayDate = DateTime(2026, 10, 24, 9);
     await tester.pumpAndSettle();
     final dated = fixedPicture();
-    expect(dated, isNot(same(styled)));
+    expect(
+      dated, same(styled),
+      reason: 'unchanged time labels reuse pixels',
+    );
     await matchesUncached(dated, 1920);
+    h.rebuild(() => h.timeFormat = 'MMM d HH:mm');
+    await tester.pumpAndSettle();
+    final dateFormat = fixedPicture();
+    expect(dateFormat, isNot(same(dated)));
+    await matchesUncached(dateFormat, 1920);
+    h.controller.displayDate = DateTime(2026, 10, 27, 9);
+    await tester.pumpAndSettle();
+    final changedLabels = fixedPicture();
+    expect(changedLabels, isNot(same(dateFormat)));
+    await matchesUncached(changedLabels, 1920);
+    expect(fixedPicture(), same(changedLabels));
+    h.rebuild(() => h.timeFormat = 'HH:mm');
+    h.controller.displayDate = DateTime(2026, 3, 7, 9);
+    await tester.pumpAndSettle();
+    final beforeDst = fixedPicture();
+    await matchesUncached(beforeDst, 1920);
+    h.controller.displayDate = DateTime(2026, 3, 8, 9);
+    await tester.pumpAndSettle();
+    final dst = fixedPicture();
+    if (Platform.environment['TZ'] == 'America/New_York') {
+      expect(DateTime(2026, 3, 8, 2).hour, 3);
+      expect(dst, isNot(same(beforeDst)));
+    }
+    await matchesUncached(dst, 1920);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.binding.handleSystemMessage({'type': 'fontsChange'});
@@ -2630,6 +2659,7 @@ class _Harness {
   DateTime? minDate, maxDate;
   double intervalHeight = 60;
   TextStyle? rulerTextStyle;
+  String timeFormat = 'h a';
   int firstDayOfWeek = 1;
   SfCalendarTimelineCoordinates? coords;
   int appointmentBuilds = 0;
@@ -2754,6 +2784,7 @@ Future<_Harness> _mount(
                     timeRulerSize: 42,
                     timeIntervalHeight: h.intervalHeight,
                     timeTextStyle: h.rulerTextStyle,
+                    timeFormat: h.timeFormat,
                   ),
                 ),
               );
