@@ -9,6 +9,12 @@ import '../common/calendar_view_helper.dart';
 import '../common/date_time_engine.dart';
 import 'day_window_all_day_fragment.dart'; // SF-22: continuous all-day cards.
 
+// SF-22: one overflow policy for builder counts and render geometry/hit testing.
+int _effectiveAllDayPositions(int positions, int? maxVisiblePositions) =>
+    maxVisiblePositions == null
+        ? positions
+        : positions.clamp(-1, maxVisiblePositions);
+
 /// Used to holds the all day appointment views in calendar widgets.
 class AllDayAppointmentLayout extends StatefulWidget {
   /// Constructor to create the all day appointment layout that holds the
@@ -285,6 +291,9 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
       widget.localizations,
       _appointmentCollection,
       _moreAppointmentIndex,
+      maxVisiblePositions: widget.continuousCardBounds == null
+          ? null
+          : widget.height ~/ kAllDayAppointmentHeight,
       widgets: _children,
     );
   }
@@ -307,6 +316,14 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
         .clamp(0.0, viewportWidth);
     return Rect.fromLTWH(rect.left, rect.top, width, rect.height);
   }
+
+  // SF-22: cached neighbours cannot reserve a row beyond the visible panel.
+  int _effectivePositions(int positions) => _effectiveAllDayPositions(
+    positions,
+    widget.continuousCardBounds == null
+        ? null
+        : widget.height ~/ kAllDayAppointmentHeight,
+  );
 
   void _updateAppointmentDetails() {
     _indexAppointments = <int, List<AppointmentView>>{};
@@ -406,14 +423,14 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
               rect.right > widget.width + 1 ||
               (rect.bottom >
                       widget.allDayPainterHeight - kAllDayAppointmentHeight &&
-                  appointmentView.maxPositions > position))) {
+                  _effectivePositions(appointmentView.maxPositions) > position))) {
         continue;
       } else if (widget.isRTL &&
           (rect.right > widget.width - widget.timeLabelWidth + 1 ||
               rect.left < 0 ||
               (rect.bottom >
                       widget.allDayPainterHeight - kAllDayAppointmentHeight &&
-                  appointmentView.maxPositions > position))) {
+                  _effectivePositions(appointmentView.maxPositions) > position))) {
         continue;
       }
 
@@ -441,7 +458,7 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
 
     /// Calculate the more appointments region when the widget as expandable
     /// and its max position greater than widget holding position.
-    if (widget.isExpandable && maxPosition > position && !widget.isExpanding) {
+    if (widget.isExpandable && _effectivePositions(maxPosition) > position && !widget.isExpanding) {
       final List<int> keys = _indexAppointments.keys.toList();
       final int endIndexPosition = position - 1;
       for (int i = 0; i < keys.length; i++) {
@@ -463,7 +480,7 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
                   )
                   .maxPositions;
         }
-        if (maxPosition <= position) {
+        if (_effectivePositions(maxPosition) <= position) {
           continue;
         }
 
@@ -479,7 +496,7 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
           /// with 1).
           if (view.position > endIndexPosition ||
               (view.position == endIndexPosition &&
-                  view.maxPositions > position)) {
+                  _effectivePositions(view.maxPositions) > position)) {
             count++;
           }
         }
@@ -516,6 +533,7 @@ class _AllDayAppointmentRenderWidget extends MultiChildRenderObjectWidget {
     this.localizations,
     this.appointmentCollection,
     this.moreAppointmentIndex, {
+    this.maxVisiblePositions,
     List<Widget> widgets = const <Widget>[],
   }) : super(children: widgets);
   final SfCalendar calendar;
@@ -538,6 +556,8 @@ class _AllDayAppointmentRenderWidget extends MultiChildRenderObjectWidget {
   final SfLocalizations localizations;
   final Map<int, int> moreAppointmentIndex;
   final List<AppointmentView> appointmentCollection;
+  // SF-22: null keeps the legacy paged overflow policy.
+  final int? maxVisiblePositions;
 
   @override
   _AllDayAppointmentRenderObject createRenderObject(BuildContext context) {
@@ -562,6 +582,7 @@ class _AllDayAppointmentRenderWidget extends MultiChildRenderObjectWidget {
       localizations,
       appointmentCollection,
       moreAppointmentIndex,
+      maxVisiblePositions,
     );
   }
 
@@ -571,6 +592,7 @@ class _AllDayAppointmentRenderWidget extends MultiChildRenderObjectWidget {
     _AllDayAppointmentRenderObject renderObject,
   ) {
     renderObject
+      ..maxVisiblePositions = maxVisiblePositions
       ..appointmentCollection = appointmentCollection
       ..moreAppointmentIndex = moreAppointmentIndex
       ..calendar = calendar
@@ -616,6 +638,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
     this._localizations,
     this.appointmentCollection,
     this.moreAppointmentIndex,
+    this._maxVisiblePositions,
   );
 
   SfCalendar calendar;
@@ -623,6 +646,20 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
   bool isExpanding;
   Map<int, int> moreAppointmentIndex;
   List<AppointmentView> appointmentCollection;
+  // SF-22: use the same visible height for layout, paint, hits and counts.
+  int? _maxVisiblePositions;
+  int? get maxVisiblePositions => _maxVisiblePositions;
+  set maxVisiblePositions(int? value) {
+    if (_maxVisiblePositions == value) {
+      return;
+    }
+    _maxVisiblePositions = value;
+    markNeedsLayout();
+    markNeedsSemanticsUpdate();
+  }
+
+  int _effectivePositions(int positions) =>
+      _effectiveAllDayPositions(positions, maxVisiblePositions);
 
   /// Width of the widget.
   double _width;
@@ -918,14 +955,14 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
           (appointmentRect.left < timeLabelWidth - 1 ||
               appointmentRect.right > size.width + 1 ||
               (appointmentRect.bottom > maximumBottomPosition &&
-                  appointmentView.maxPositions > maxPosition))) {
+                  _effectivePositions(appointmentView.maxPositions) > maxPosition))) {
         child = childAfter(child);
         continue;
       } else if (isRTL &&
           (appointmentRect.right > size.width - timeLabelWidth + 1 ||
               appointmentRect.left < 0 ||
               (appointmentRect.bottom > maximumBottomPosition &&
-                  appointmentView.maxPositions > maxPosition))) {
+                  _effectivePositions(appointmentView.maxPositions) > maxPosition))) {
         child = childAfter(child);
         continue;
       }
@@ -1012,14 +1049,14 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
           (appointmentRect.left < timeLabelWidth - 1 ||
               appointmentRect.right > size.width + 1 ||
               (appointmentRect.bottom > maximumBottomPosition &&
-                  appointmentView.maxPositions > position))) {
+                  _effectivePositions(appointmentView.maxPositions) > position))) {
         child = childAfter(child);
         continue;
       } else if (isRTL &&
           (appointmentRect.right > size.width - timeLabelWidth + 1 ||
               appointmentRect.left < 0 ||
               (appointmentRect.bottom > maximumBottomPosition &&
-                  appointmentView.maxPositions > position))) {
+                  _effectivePositions(appointmentView.maxPositions) > position))) {
         child = childAfter(child);
         continue;
       }
@@ -1166,7 +1203,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
           (rect.left < timeLabelWidth - 1 ||
               rect.right > size.width + 1 ||
               (rect.bottom > allDayPainterHeight - kAllDayAppointmentHeight &&
-                  appointmentView.maxPositions > position))) {
+                  _effectivePositions(appointmentView.maxPositions) > position))) {
         if (child != null) {
           child = childAfter(child);
         }
@@ -1175,7 +1212,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
           (rect.right > size.width - timeLabelWidth + 1 ||
               rect.left < 0 ||
               (rect.bottom > allDayPainterHeight - kAllDayAppointmentHeight &&
-                  appointmentView.maxPositions > position))) {
+                  _effectivePositions(appointmentView.maxPositions) > position))) {
         if (child != null) {
           child = childAfter(child);
         }
@@ -1208,7 +1245,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
 
     if (isExpandable) {
       _addExpandOrCollapseIcon(context.canvas, size, position);
-      if (_maxPosition > position && !isExpanding) {
+      if (_effectivePositions(_maxPosition) > position && !isExpanding) {
         _addExpanderText(context.canvas, position, textPadding);
       }
     }
@@ -1500,7 +1537,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
 
   void _addExpandOrCollapseIcon(Canvas canvas, Size size, int position) {
     final int iconCodePoint =
-        _maxPosition <= position
+        _effectivePositions(_maxPosition) <= position
             ? Icons.expand_less.codePoint
             : Icons.expand_more.codePoint;
     final TextSpan icon = TextSpan(
@@ -1810,7 +1847,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
           ),
           properties: SemanticsProperties(
             label:
-                _maxPosition <= allDayPainterHeight ~/ kAllDayAppointmentHeight
+                _effectivePositions(_maxPosition) <= allDayPainterHeight ~/ kAllDayAppointmentHeight
                     ? 'Collapse all day section'
                     : 'Expand all day section',
             textDirection: TextDirection.ltr,
@@ -1820,7 +1857,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
     }
 
     if (isExpandable &&
-        _maxPosition > (allDayPainterHeight ~/ kAllDayAppointmentHeight) &&
+        _effectivePositions(_maxPosition) > (allDayPainterHeight ~/ kAllDayAppointmentHeight) &&
         !isExpanding) {
       final List<int> keys = moreAppointmentIndex.keys.toList();
       for (final int index in keys) {
@@ -1849,7 +1886,7 @@ class _AllDayAppointmentRenderObject extends CustomCalendarRenderObject {
           view.appointmentRect == null ||
           (view.appointmentRect != null &&
               view.appointmentRect!.bottom > bottom &&
-              view.maxPositions > position)) {
+              _effectivePositions(view.maxPositions) > position)) {
         continue;
       }
 

@@ -11,6 +11,143 @@ import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_he
 import 'package:syncfusion_flutter_calendar/src/calendar/views/calendar_view.dart';
 
 void main() {
+  // SF-22/#4241: a later crowded day must reserve the overflow row across a span.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      for (final crowdedDayIsVisible in [true, false]) {
+        testWidgets(
+          '$days-day later overflow preserves visible cards RTL=$rtl crowdedDayIsVisible=$crowdedDayIsVisible',
+          (tester) async {
+            final h = await _mount(
+              tester,
+              days,
+              rtl: rtl,
+              appointmentBuilder: (context, details) {
+                // Like the host, the more-region builder leaves the native count visible.
+                if (details.isMoreAppointmentRegion) {
+                  return const SizedBox.expand();
+                }
+                return const ColoredBox(color: Colors.blue);
+              },
+            );
+            h.data.appointments!.addAll([
+              for (var i = 0; i < 2; i++)
+                Appointment(
+                  id: 'early-$i',
+                  isAllDay: true,
+                  startTime: DateTime(2026, 10, 18, i),
+                  endTime: DateTime(2026, 10, 19 + days + 1, 23),
+                ),
+              Appointment(
+                id: 'third-row-span',
+                isAllDay: true,
+                startTime: DateTime(2026, 10, 19),
+                endTime: DateTime(2026, 10, 19 + days + 1, 23),
+              ),
+              Appointment(
+                id: 'later-fourth-row',
+                isAllDay: true,
+                startTime: DateTime(
+                  2026,
+                  10,
+                  crowdedDayIsVisible ? 20 : 19 + days,
+                ),
+                endTime: DateTime(
+                  2026,
+                  10,
+                  crowdedDayIsVisible ? 20 : 19 + days,
+                  23,
+                ),
+              ),
+              for (var i = 0; i < 2; i++)
+                Appointment(
+                  id: 'buffer-only-$i',
+                  isAllDay: true,
+                  startTime: DateTime(2026, 10, 19 + days),
+                  endTime: DateTime(2026, 10, 19 + days, 23),
+                ),
+            ]);
+            h.data.notifyListeners(
+              CalendarDataSourceAction.reset,
+              h.data.appointments!,
+            );
+            await tester.pumpAndSettle();
+            final collapsed = h.coords!.viewportTopInBody;
+            final x =
+                h.coords!.dayWindow!.xForDate(DateTime(2026, 10, 20)) +
+                (rtl ? 5 : h.column - 5);
+            Future<List<int>> pixelAt(double y) async {
+              final boundary =
+                  h.rasterKey.currentContext!.findRenderObject()!
+                      as RenderRepaintBoundary;
+              return (await tester.runAsync(() async {
+                final image = await boundary.toImage();
+                final pixels = (await image.toByteData())!;
+                final index = (y.floor() * image.width + x.floor()) * 4;
+                final rgb = [
+                  for (var i = 0; i < 3; i++) pixels.getUint8(index + i),
+                ];
+                image.dispose();
+                return rgb;
+              }))!;
+            }
+
+            expect(
+              await pixelAt(collapsed - 45),
+              [33, 150, 243],
+              reason:
+                  'Positive control: the first visible row is actually painted',
+            );
+            if (!crowdedDayIsVisible) {
+              expect(
+                await pixelAt(collapsed - 5),
+                [33, 150, 243],
+                reason:
+                    'Screen-off crowding must not hide the visible third row',
+              );
+              final details = h.controller.getCalendarDetailsAtOffset!(
+                Offset(x, collapsed - 10),
+              )!;
+              expect(
+                (details.appointments!.single as Appointment).id,
+                'third-row-span',
+              );
+              h.controller.forward!();
+              await tester.pumpAndSettle();
+              expect(
+                await pixelAt(h.coords!.viewportTopInBody - 5),
+                isNot([33, 150, 243]),
+                reason: 'Entering the crowded block must reserve the count row',
+              );
+              h.controller.backward!();
+              await tester.pumpAndSettle();
+              expect(
+                await pixelAt(h.coords!.viewportTopInBody - 5),
+                [33, 150, 243],
+                reason:
+                    'Returning to the sparse window must restore the third row',
+              );
+              return;
+            }
+            expect(
+              await pixelAt(collapsed - 5),
+              isNot([33, 150, 243]),
+              reason: 'The overflow row must not also paint the third-row card',
+            );
+            await tester.tapAt(Offset(x, collapsed - 10));
+            await tester.pumpAndSettle();
+            expect(h.coords!.viewportTopInBody, greaterThan(collapsed));
+            expect(await pixelAt(collapsed - 5), [
+              33,
+              150,
+              243,
+            ], reason: 'Expanding restores access to the spanning event');
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+  }
   // SF-22: fragments of one all-day occurrence share a single visual card.
   for (final days in [3, 7]) {
     for (final rtl in [false, true]) {
@@ -2515,6 +2652,7 @@ Future<_Harness> _mount(
   String? timeZone,
   DateTime? displayDate,
   DayWindowNavigation policy = DayWindowNavigation.continuous,
+  CalendarAppointmentBuilder? appointmentBuilder,
 }) async {
   tester.view.physicalSize = const Size(420, 850);
   tester.view.devicePixelRatio = 1;
@@ -2574,7 +2712,7 @@ Future<_Harness> _mount(
                   allDayPanelChronologicalSort: true,
                   dataSource: h.data,
                   timeZone: h.timeZone,
-                  appointmentBuilder: (context, details) {
+                  appointmentBuilder: appointmentBuilder ?? (context, details) {
                     h.appointmentBuilds++;
                     h.builtDates.add(DateUtils.dateOnly(details.date));
                     if (!details.isMoreAppointmentRegion &&

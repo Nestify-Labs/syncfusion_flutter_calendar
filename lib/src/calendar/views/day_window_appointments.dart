@@ -122,9 +122,9 @@ class _DayWindowAppointments {
         (int value, AppointmentView v) => math.max(value, v.position + 1),
       );
       for (final AppointmentView view in overlap) {
-        if (view.maxPositions == -1) {
-          view.maxPositions = rows;
-        }
+        // SF-22: a later crowded date must reserve the overflow row for every
+        // spanning fragment, not just appointments first seen on that date.
+        view.maxPositions = math.max(view.maxPositions, rows);
       }
     }
   }

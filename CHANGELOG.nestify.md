@@ -4,6 +4,8 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
 
+- SF-22 (#4241): reserve the collapsed overflow row when a spanning all-day event reaches a more crowded later date, preventing the native count from painting over its title in continuous 3/7-day views.
+
 
 - SF-22 (#4241, candidate): retain date blocks while custom all-day builders share one visible card and consistent complete-card styling across seams; reuse builder subtrees, preserve hit regions/lanes/expansion/default paging, and publish held-touch interruption before hit testing.
 
