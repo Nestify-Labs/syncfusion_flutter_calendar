@@ -11,6 +11,136 @@ import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_he
 import 'package:syncfusion_flutter_calendar/src/calendar/views/calendar_view.dart';
 
 void main() {
+  // SF-22: fragments of one all-day occurrence share a single visual card.
+  for (final days in [3, 7]) {
+    for (final rtl in [false, true]) {
+      for (final direction in [-1, 1]) {
+        testWidgets('$days-day all-day card stays continuous $rtl $direction', (
+          tester,
+        ) async {
+          final h = await _mount(tester, days, rtl: rtl);
+          // Pixel 6a density exposes fractional-pixel clip seams.
+          const pixelRatio = 2.625;
+          tester.view.devicePixelRatio = pixelRatio;
+          tester.view.physicalSize = const Size(
+            420 * pixelRatio,
+            850 * pixelRatio,
+          );
+          await tester.pumpAndSettle();
+          final event = Appointment(
+            id: 'continuous-all-day',
+            subject: 'One continuous title',
+            isAllDay: true,
+            startTime: DateTime(2026, 10, 1),
+            endTime: DateTime(2026, 12, 1),
+          );
+          h.data.appointments!.add(event);
+          h.data.notifyListeners(CalendarDataSourceAction.add, [event]);
+          await tester.pumpAndSettle();
+          final drag = await tester.startGesture(const Offset(210, 400));
+          final sign = (rtl ? 1.0 : -1.0) * direction;
+          await drag.moveBy(Offset(sign * 20, 0));
+          await tester.pump();
+          await drag.moveBy(Offset(sign * h.column * .8, 0));
+          await tester.pump(const Duration(milliseconds: 400));
+          final cards = tester
+              .renderObjectList<RenderBox>(
+                find.byKey(const ValueKey('continuous-all-day')),
+              )
+              .map((box) => box.localToGlobal(Offset.zero) & box.size)
+              .where(
+                (rect) =>
+                    rect.overlaps(Rect.fromLTWH(rtl ? 0 : 42, 0, 378, 850)),
+              )
+              .toList();
+          expect(
+            cards.length,
+            greaterThanOrEqualTo(2),
+            reason: 'The gesture must expose both sides of a date-block seam',
+          );
+          for (final card in cards) {
+            expect(card.left, closeTo(rtl ? 0 : 42, .01));
+            expect(card.width, closeTo(378, .01));
+            expect(card.top, closeTo(cards.first.top, .01));
+          }
+          final boundary =
+              h.rasterKey.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          await tester.runAsync(() async {
+            final image = await boundary.toImage(pixelRatio: pixelRatio);
+            final pixels = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            final y = ((cards.first.bottom - 2) * pixelRatio).floor();
+            for (
+              var x = ((rtl ? 1 : 43) * pixelRatio).ceil();
+              x < (rtl ? 377 : 419) * pixelRatio;
+              x++
+            ) {
+              final index = (y * image.width + x) * 4;
+              expect(
+                [
+                  pixels.getUint8(index),
+                  pixels.getUint8(index + 1),
+                  pixels.getUint8(index + 2),
+                ],
+                [33, 150, 243],
+                reason: 'No background seam at x=$x y=$y',
+              );
+            }
+            image.dispose();
+          });
+          await drag.up();
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+        });
+      }
+    }
+  }
+  for (final days in [3, 7]) {
+    testWidgets('$days-day touching inertia publishes the interrupted window', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      await tester.flingFrom(
+        const Offset(350, 450),
+        const Offset(-150, 0),
+        1500,
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(h.coords!.dayWindow!.phase, DayWindowPhase.ballistic);
+      final before = h.coords!.dayWindow!;
+      final press = await tester.startGesture(const Offset(220, 450));
+      await tester.pump();
+      expect(h.coords!.dayWindow!.phase, DayWindowPhase.dragging);
+      expect(h.coords!.dayWindow!.horizontalOffset, before.horizontalOffset);
+      await press.up();
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.phase, DayWindowPhase.idle);
+    });
+  }
+  for (final days in [3, 7]) {
+    testWidgets('$days-day all-day builders share complete card dimensions', (
+      tester,
+    ) async {
+      final h = await _mount(tester, days);
+      final first = h.coords!.dayWindow!.renderedDates[days];
+      final event = Appointment(
+        id: 'two-day-seam',
+        isAllDay: true,
+        startTime: DateTime(first.year, first.month, first.day + days - 1),
+        endTime: DateTime(first.year, first.month, first.day + days),
+      );
+      h.data.appointments!.add(event);
+      h.data.notifyListeners(CalendarDataSourceAction.add, [event]);
+      await tester.pumpAndSettle();
+      expect(h.builtAllDayBounds.length, greaterThanOrEqualTo(2));
+      for (final bounds in h.builtAllDayBounds) {
+        expect(bounds.width, closeTo(h.column * 2, .01));
+        expect(bounds.height, 19);
+      }
+    });
+  }
   // SF-22: settlement changes the logical window, not the mounted date blocks.
   for (final days in [3, 7]) {
     for (final rtl in [false, true]) {
@@ -2243,6 +2373,45 @@ void main() {
     },
   );
 
+  testWidgets('continuous card content follows inherited theme changes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(420, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final theme = ValueNotifier(ThemeData.light());
+    addTearDown(theme.dispose);
+    final calendar = SfCalendar(
+      dayWindowNavigation: DayWindowNavigation.continuous,
+      initialDisplayDate: DateTime(2026, 10, 19, 9),
+      dataSource: _Source(),
+      showCurrentTimeIndicator: false,
+      timeSlotViewSettings: const TimeSlotViewSettings(numberOfDaysInView: 3),
+      appointmentBuilder: (context, details) =>
+          Text(Theme.of(context).brightness.name),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ValueListenableBuilder<ThemeData>(
+            valueListenable: theme,
+            builder: (context, value, child) => Theme(data: value, child: child!),
+            child: calendar,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('light'), findsWidgets);
+    theme.value = ThemeData.dark();
+    await tester.pumpAndSettle();
+    expect(tester.widget<SfCalendar>(find.byType(SfCalendar)), same(calendar));
+    expect(find.text('dark'), findsWidgets);
+    expect(find.text('light'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   test(
     'default stays paged and date geometry crosses month/year boundaries',
     () {
@@ -2328,6 +2497,7 @@ class _Harness {
   SfCalendarTimelineCoordinates? coords;
   int appointmentBuilds = 0;
   final builtDates = <DateTime>[];
+  final builtAllDayBounds = <Rect>[];
   bool showSubjects = false;
   String builderSuffix = '';
   bool showWeekNumber = false;
@@ -2407,6 +2577,10 @@ Future<_Harness> _mount(
                   appointmentBuilder: (context, details) {
                     h.appointmentBuilds++;
                     h.builtDates.add(DateUtils.dateOnly(details.date));
+                    if (!details.isMoreAppointmentRegion &&
+                        (details.appointments.first as Appointment).isAllDay) {
+                      h.builtAllDayBounds.add(details.bounds);
+                    }
                     return ColoredBox(
                       key:
                           details.appointments.length == 1

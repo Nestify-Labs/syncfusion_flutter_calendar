@@ -7,6 +7,7 @@ import '../../../calendar.dart';
 import '../appointment_engine/appointment_helper.dart';
 import '../common/calendar_view_helper.dart';
 import '../common/date_time_engine.dart';
+import 'day_window_all_day_fragment.dart'; // SF-22: continuous all-day cards.
 
 /// Used to holds the all day appointment views in calendar widgets.
 class AllDayAppointmentLayout extends StatefulWidget {
@@ -33,7 +34,13 @@ class AllDayAppointmentLayout extends StatefulWidget {
     this.localizations,
     this.updateCalendarState, {
     super.key,
+    this.continuousCardBounds,
+    this.continuousChanges,
   });
+
+  // SF-22: absent for paged views; native layout and hit rectangles stay intact.
+  final Rect Function(CalendarAppointment, Rect)? continuousCardBounds;
+  final Listenable? continuousChanges;
 
   /// Holds the calendar instance used the get the properties of calendar.
   final SfCalendar calendar;
@@ -183,16 +190,21 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
                 widget.calendar.dataSource,
               ),
             ]),
-            Rect.fromLTWH(
-              appointmentView.appointmentRect!.left,
-              appointmentView.appointmentRect!.top,
-              appointmentView.appointmentRect!.width,
-              appointmentView.appointmentRect!.right,
-            ),
+            _builderBounds(appointmentView),
           ),
         );
 
-        _children.add(RepaintBoundary(child: child));
+        // SF-22: retain the builder subtree while motion only relayouts its slice.
+        final Rect fragment = appointmentView.appointmentRect!.outerRect;
+        _children.add(RepaintBoundary(
+          child: widget.continuousCardBounds == null ? child :
+              DayWindowAllDayFragment(
+                changes: widget.continuousChanges!,
+                cardBounds: () => widget.continuousCardBounds!(
+                    appointmentView.appointment!, fragment),
+                child: child,
+              ),
+        ));
       }
 
       /// Get the more appointment index(more appointment index map holds more
@@ -277,6 +289,25 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
     );
   }
 
+  // SF-22: every slice gets the same nominal card size for builder styling.
+  // A clipped edge can narrow during motion without rebuilding its contents.
+  Rect _builderBounds(AppointmentView view) {
+    final RRect rect = view.appointmentRect!;
+    if (widget.continuousCardBounds == null) {
+      return Rect.fromLTWH(rect.left, rect.top, rect.width, rect.right);
+    }
+    final DateTime start = view.appointment!.actualStartTime;
+    final DateTime end = view.appointment!.actualEndTime;
+    final int days = DateTime.utc(end.year, end.month, end.day)
+        .difference(DateTime.utc(start.year, start.month, start.day)).inDays + 1;
+    final double viewportWidth = widget.width - widget.timeLabelWidth;
+    final double padding = CalendarViewHelper.getCellEndPadding(
+        widget.calendar.cellEndPadding, widget.isMobilePlatform);
+    final double width = (days * viewportWidth / widget.visibleDates.length - padding)
+        .clamp(0.0, viewportWidth);
+    return Rect.fromLTWH(rect.left, rect.top, width, rect.height);
+  }
+
   void _updateAppointmentDetails() {
     _indexAppointments = <int, List<AppointmentView>>{};
     _moreAppointmentIndex = <int, int>{};
@@ -338,6 +369,17 @@ class _AllDayAppointmentLayoutState extends State<AllDayAppointmentLayout> {
                 kAllDayAppointmentHeight -
                 1,
           ),
+          const Radius.circular(cornerRadius),
+        );
+      }
+
+      // SF-22: do not leave cell-end gutters inside a continuing all-day card.
+      if (widget.continuousCardBounds != null &&
+          DateUtils.dateOnly(appointmentView.appointment!.actualEndTime)
+              .isAfter(DateUtils.dateOnly(widget.visibleDates.last))) {
+        rect = RRect.fromRectAndRadius(
+          Rect.fromLTRB(widget.isRTL ? 0 : rect.left, rect.top,
+              widget.isRTL ? rect.right : widget.width, rect.bottom),
           const Radius.circular(cornerRadius),
         );
       }

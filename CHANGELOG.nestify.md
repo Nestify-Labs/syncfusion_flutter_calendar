@@ -4,6 +4,9 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
 
+
+- SF-22 (#4241, candidate): retain date blocks while custom all-day builders share one visible card and consistent complete-card styling across seams; reuse builder subtrees, preserve hit regions/lanes/expansion/default paging, and publish held-touch interruption before hit testing.
+
 - SF-22 (#4241): keep the fixed week-number corner aligned with the logical window after partial-day settlement, including RTL.
 
 - SF-22 (#4241, candidate): refresh continuous builders on value-equal source notifications by projection identity, allowing hosts to retain unrelated date blocks without replacing the calendar configuration; paged comparison is unchanged.

@@ -788,6 +788,10 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
         if (_usesContinuousDayWindow && (_dayWindowMotion?.isAnimating ?? false)) {
           _stopDayWindowMotion();
           _dayWindowContactInterrupted = true;
+          // SF-22: a held contact needs current data before tap/long-press hit tests.
+          // Keep fractional geometry; idle would expose the old settled dates.
+          _dayWindowPhase = DayWindowPhase.dragging;
+          _publishDayWindowCoordinates();
         }
       },
       onPointerUp: (_) {
@@ -8417,6 +8421,41 @@ class _CalendarViewState extends State<_CalendarView>
     );
   }
 
+  // SF-22: project one visible card into each retained block. Its title and
+  // corners have the same global position on both sides of a physical seam.
+  Rect _dayWindowAllDayCardBounds(
+    _CustomCalendarScrollViewState owner,
+    CalendarAppointment appointment,
+    Rect fragment,
+  ) {
+    final double column = owner._dayColumnWidth;
+    final double translation = owner._position + owner._dayDistance(
+        owner._currentViewVisibleDates.first, widget.visibleDates.first) *
+        column * owner._dayDirection;
+    final double viewportLeft = (owner.widget.isRTL ? 0 :
+        widget.width - owner._dayWindowStride) - translation;
+    final double viewportRight = viewportLeft + owner._dayWindowStride;
+    final int start = owner._dayDistance(widget.visibleDates.first,
+        appointment.actualStartTime);
+    final int end = owner._dayDistance(widget.visibleDates.first,
+        appointment.actualEndTime) + 1;
+    final double padding = CalendarViewHelper.getCellEndPadding(
+        widget.calendar.cellEndPadding, widget.isMobilePlatform);
+    final double left = _isRTL
+        ? (widget.visibleDates.length - end) * column + padding
+        : widget.width - owner._dayWindowStride + start * column;
+    final double right = _isRTL
+        ? (widget.visibleDates.length - start) * column
+        : widget.width - owner._dayWindowStride + end * column - padding;
+    final double clippedLeft = math.max(left, viewportLeft);
+    final double clippedRight = math.min(right, viewportRight);
+    if (clippedRight <= clippedLeft) {
+      return Rect.fromLTWH(0, 0, fragment.width, 0);
+    }
+    return Rect.fromLTWH(clippedLeft - fragment.left, 0,
+        clippedRight - clippedLeft, fragment.height);
+  }
+
   Widget _getAllDayLayout(
     double timeLabelWidth,
     double panelHeight,
@@ -8429,6 +8468,9 @@ class _CalendarViewState extends State<_CalendarView>
       widget.calendar.timeSlotViewSettings.nonWorkingDays,
       widget.calendar.monthViewSettings.numberOfWeeksInView,
     );
+    // SF-22: reuse the coordinate repaint signal; no appointment rebuild per tick.
+    final _CustomCalendarScrollViewState? owner =
+        _continuousDayBlock ? _timelineViewportOwner : null;
     final Widget allDayLayout = AllDayAppointmentLayout(
       widget.calendar,
       widget.view,
@@ -8457,6 +8499,10 @@ class _CalendarViewState extends State<_CalendarView>
           : _updateCalendarStateDetails.allDayPanelHeight,
       widget.localizations,
       _getPainterProperties,
+      continuousChanges: owner?._dayWindowRulerRepaint,
+      continuousCardBounds: owner == null ? null :
+          (CalendarAppointment appointment, Rect fragment) =>
+              _dayWindowAllDayCardBounds(owner, appointment, fragment),
     );
 
     if ((_mouseCursor == SystemMouseCursors.basic ||
