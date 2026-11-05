@@ -542,6 +542,53 @@ void main() {
       });
     }
   }
+  // SF-22/#4295: inspect composited pixels, not semantics or a manually repainted cache.
+  for (final days in [3, 7]) {
+    testWidgets('$days-day evening ruler survives arrow and fling navigation', (tester) async {
+      final h = await _mount(tester, days, displayDate: DateTime(2026, 11, 4, 16));
+      h.rebuild(() {
+        h.timeFormat = 'HH:mm';
+        h.rulerTextStyle = const TextStyle(color: Colors.black, fontSize: 10);
+      });
+      await tester.pumpAndSettle();
+      Future<void> expectVisibleLabels() async {
+        final coords = h.coords!;
+        final boundary = h.rasterKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final counts = (await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          final data = (await image.toByteData())!;
+          final counts = <int>[];
+          for (int hour = 1; hour < 24; hour++) {
+            final y = coords.viewportTopInBody + hour * coords.intervalHeight - coords.scrollOffset;
+            if (y < coords.viewportTopInBody + 12 || y > image.height - 12) continue;
+            int ink = 0;
+            for (int py = y.floor() - 8; py <= y.ceil() + 8; py++) {
+              for (int x = 3; x < 35; x++) {
+                final i = (py * image.width + x) * 4;
+                if (data.getUint8(i) < 100 && data.getUint8(i + 1) < 100 && data.getUint8(i + 2) < 100) ink++;
+              }
+            }
+            counts.add(ink);
+          }
+          image.dispose();
+          return counts;
+        }))!;
+        expect(counts.length, greaterThan(3));
+        expect(counts, everyElement(greaterThan(5)), reason: 'Every visible hour must have painted text: $counts');
+      }
+      await expectVisibleLabels();
+      h.controller.forward!();
+      await tester.pumpAndSettle();
+      await expectVisibleLabels();
+      h.controller.backward!();
+      await tester.pumpAndSettle();
+      await expectVisibleLabels();
+      await tester.flingFrom(const Offset(350, 500), const Offset(-280, 0), 2500);
+      await tester.pumpAndSettle();
+      await expectVisibleLabels();
+    });
+  }
+
   testWidgets('fixed ruler reuses pixels and invalidates configuration', (
     tester,
   ) async {
