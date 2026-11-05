@@ -2,7 +2,7 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
-## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
+## v33.2.8+nestify.28 — continuous day-window navigation (#4066)
 
 - SF-22 (#4241): add an optional interaction-only continuous navigation lock listenable, preserving event content on idle lock/unlock; default/paged behavior is unchanged.
 
