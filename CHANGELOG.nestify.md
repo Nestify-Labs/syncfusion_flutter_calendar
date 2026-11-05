@@ -4,6 +4,10 @@ This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` 
 
 ## v33.2.8+nestify.28 — continuous day-window navigation (#4066, unreleased)
 
+- SF-22 (#4241): add an optional interaction-only continuous navigation lock listenable, preserving event content on idle lock/unlock; default/paged behavior is unchanged.
+
+- SF-22 (#4301): preserve the snapped horizontal position through navigation-lock and builder/style updates; check shifted date columns across lock/scale/unlock and fractional-motion locking.
+
 - SF-22 (#4295 evidence review): add composited-pixel coverage of evening ruler labels after arrows/flings in 3/7-day views; the existing implementation passes, with no runtime change.
 
 - SF-22 (#4241): reuse continuous fixed time-ruler pictures across dates with identical normalized labels, preserving date-format/DST and configuration invalidation.

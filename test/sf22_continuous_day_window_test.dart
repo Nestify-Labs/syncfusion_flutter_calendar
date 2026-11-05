@@ -13,6 +13,32 @@ import 'package:syncfusion_flutter_calendar/src/calendar/common/calendar_view_he
 import 'package:syncfusion_flutter_calendar/src/calendar/views/calendar_view.dart';
 
 void main() {
+  for (final days in [3, 7]) {
+    testWidgets('$days-day interaction lock retains content and blocks swipes', (tester) async {
+      final h = await _mount(tester, days, allDay: true);
+      final lock = ValueNotifier<bool>(false);
+      h.rebuild(() => h.navigationLock = lock);
+      await tester.pumpAndSettle();
+      final builds = h.appointmentBuilds;
+      final first = h.coords!.dayWindow!.settledFirstDate;
+      lock.value = true;
+      await tester.pumpAndSettle();
+      expect(h.appointmentBuilds, builds);
+      await tester.drag(find.byType(SfCalendar), const Offset(-180, 0));
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.settledFirstDate, first);
+      lock.value = false;
+      await tester.pumpAndSettle();
+      expect(h.appointmentBuilds, builds);
+      await tester.drag(find.byType(SfCalendar), const Offset(-180, 0));
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.settledFirstDate, isNot(first));
+      await tester.pumpWidget(const SizedBox.shrink());
+      lock.value = true;
+      lock.dispose();
+      expect(tester.takeException(), isNull);
+    });
+  }
   // SF-22/#4241: a later crowded day must reserve the overflow row across a span.
   for (final days in [3, 7]) {
     for (final rtl in [false, true]) {
@@ -1990,11 +2016,16 @@ void main() {
         h.rebuild(() => h.navigation = ViewNavigationMode.none);
         await tester.pumpAndSettle();
         final locked = h.windows.last.first;
+        expect(h.coords!.dayWindow!.xForDate(locked), closeTo(42, .1));
+        expect(h.key.currentState!.queryDateForGlobalX(42 + h.column / 2), locked);
+        _checkVisibleEvents(tester, h);
         await drag.moveBy(Offset(-h.column * 2, 0));
         await drag.up();
         await tester.pumpAndSettle();
         expect(h.windows.last.first, locked);
         expect(h.coords!.dayWindow!.phase, DayWindowPhase.idle);
+        expect(h.coords!.dayWindow!.xForDate(locked), closeTo(42, .1));
+        expect(h.key.currentState!.queryDateForGlobalX(42 + h.column / 2), locked);
         h.rebuild(() => h.navigation = ViewNavigationMode.snap);
         await tester.pumpAndSettle();
         await tester.timedDragFrom(
@@ -2439,6 +2470,59 @@ void main() {
     }
   });
 
+  for (final days in [3, 7]) {
+    testWidgets('$days-day separate lock scale unlock retains shifted columns', (tester) async {
+      final h = await _mount(tester, days, allDay: true);
+      h.rebuild(() => h.rebuildScheduleHeader = true);
+      await tester.pumpAndSettle();
+      final drag = await tester.startGesture(const Offset(300, 450));
+      await drag.moveBy(const Offset(-20, 0));
+      await tester.pump();
+      await drag.moveBy(Offset(-h.column, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      await drag.up();
+      await tester.pumpAndSettle();
+      final first = h.coords!.dayWindow!.settledFirstDate;
+      expect(first, DateTime(2026, 10, 20));
+      for (final change in <VoidCallback>[
+        () => h.navigation = ViewNavigationMode.none,
+        () => h.intervalHeight = 90,
+        () => h.navigation = ViewNavigationMode.snap,
+        () => h.navigation = ViewNavigationMode.none,
+        () => h.intervalHeight = 60,
+        () => h.navigation = ViewNavigationMode.snap,
+      ]) {
+        h.rebuild(change);
+        await tester.pumpAndSettle();
+        expect(h.coords!.dayWindow!.settledFirstDate, first);
+        expect(h.key.currentState!.queryDateForGlobalX(42 + h.column / 2), first);
+        _checkVisibleEvents(tester, h);
+      }
+    });
+    testWidgets('$days-day zoom and lock retain a shifted first date', (tester) async {
+      final h = await _mount(tester, days, allDay: true);
+      final drag = await tester.startGesture(const Offset(300, 450));
+      await drag.moveBy(const Offset(-20, 0));
+      await tester.pump();
+      await drag.moveBy(Offset(-h.column, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      await drag.up();
+      await tester.pumpAndSettle();
+      final first = h.coords!.dayWindow!.settledFirstDate;
+      expect(first, DateTime(2026, 10, 20));
+      h.rebuild(() {
+        h.navigation = ViewNavigationMode.none;
+        h.intervalHeight = 90;
+      });
+      await tester.pumpAndSettle();
+      expect(h.coords!.dayWindow!.settledFirstDate, first);
+      expect(h.key.currentState!.queryDateForGlobalX(42 + h.column / 2), first);
+      _checkVisibleEvents(tester, h);
+      expect(tester.takeException(), isNull);
+    });
+
+  }
+
   testWidgets(
     'continuous zoom preserves the prepared focal time in every block',
     (tester) async {
@@ -2705,6 +2789,8 @@ class _Harness {
   bool rtl = false;
   DateTime? minDate, maxDate;
   double intervalHeight = 60;
+  bool rebuildScheduleHeader = false;
+  ValueNotifier<bool>? navigationLock;
   TextStyle? rulerTextStyle;
   String timeFormat = 'h a';
   int firstDayOfWeek = 1;
@@ -2772,6 +2858,7 @@ Future<_Harness> _mount(
                   controller: h.controller,
                   dayWindowNavigation: h.policy,
                   viewNavigationMode: h.navigation,
+                  dayWindowNavigationLocked: h.navigationLock,
                   minDate: h.minDate,
                   maxDate: h.maxDate,
                   backgroundColor: h.background,
@@ -2782,6 +2869,9 @@ Future<_Harness> _mount(
                   initialDisplayDate: displayDate ?? DateTime(2026, 10, 19, 9),
                   headerHeight: 0,
                   viewHeaderHeight: 50,
+                  scheduleViewMonthHeaderBuilder: h.rebuildScheduleHeader
+                      ? (context, details) => const SizedBox()
+                      : null,
                   showCurrentTimeIndicator: false,
                   showWeekNumber: h.showWeekNumber,
                   cellEndPadding: 0,

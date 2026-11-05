@@ -214,6 +214,7 @@ class SfCalendar extends StatefulWidget {
     this.viewNavigationMode = ViewNavigationMode.snap,
     // SF-22: opt-in continuous multi-day browsing.
     this.dayWindowNavigation = DayWindowNavigation.paged,
+    this.dayWindowNavigationLocked,
     this.allowedViews,
     this.specialRegions,
     this.loadMoreWidgetBuilder,
@@ -1306,6 +1307,11 @@ class SfCalendar extends StatefulWidget {
   ///
   /// ```
   final ViewNavigationMode viewNavigationMode;
+
+  // SF-22: an interaction-only channel; null preserves existing navigation.
+  /// Locks continuous day-window gestures without rebuilding event content.
+  /// The caller owns and disposes this listenable. Ignored in paged views.
+  final ValueListenable<bool>? dayWindowNavigationLocked;
 
   // SF-22: other views ignore this policy; navigation none remains the lock.
   /// Day-sized continuous browsing for day(3) and week(7) views.

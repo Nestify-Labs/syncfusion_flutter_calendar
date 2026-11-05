@@ -302,6 +302,20 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
   // _position contains distance that the view swiped
   double _position = 0;
 
+  // SF-22: navigation locks do not invalidate event geometry or builders.
+  ViewNavigationMode get _effectiveNavigationMode =>
+      _usesContinuousDayWindow &&
+          (widget.calendar.dayWindowNavigationLocked?.value ?? false)
+      ? ViewNavigationMode.none : widget.calendar.viewNavigationMode;
+
+  void _onDayWindowLockChanged() {
+    if (!mounted || !_usesContinuousDayWindow ||
+        !(widget.calendar.dayWindowNavigationLocked?.value ?? false)) return;
+    if (_dayWindowPhase != DayWindowPhase.idle) {
+      _settleDayWindow(0, immediate: true);
+    }
+  }
+
   // SF-22: independent motion session, never shared with paged navigation.
   AnimationController? _dayWindowMotion;
   double _dayWindowTravel = 0, _dayWindowBaseTravel = 0;
@@ -408,6 +422,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
         widget.view,
       ),
     );
+    widget.calendar.dayWindowNavigationLocked?.addListener(_onDayWindowLockChanged);
     _dragDetails = ValueNotifier<_DragPaintDetails>(
       _DragPaintDetails(position: ValueNotifier<Offset?>(null)),
     );
@@ -440,9 +455,13 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
   @override
   void didUpdateWidget(CustomCalendarScrollView oldWidget) {
+    if (oldWidget.calendar.dayWindowNavigationLocked != widget.calendar.dayWindowNavigationLocked) {
+      oldWidget.calendar.dayWindowNavigationLocked?.removeListener(_onDayWindowLockChanged);
+      widget.calendar.dayWindowNavigationLocked?.addListener(_onDayWindowLockChanged);
+      _onDayWindowLockChanged();
+    }
     // SF-22: all inputs that change date/coordinate space invalidate old motion.
     final bool wasContinuous = _isContinuousDayWindow(oldWidget);
-    final double savedDayWindowPosition = _position;
     final bool dayWindowGeometryChanged = oldWidget.view != widget.view ||
         oldWidget.controller != widget.controller ||
         oldWidget.width != widget.width || oldWidget.height != widget.height ||
@@ -479,6 +498,9 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     } else if (dayWindowLockChanged && widget.calendar.viewNavigationMode == ViewNavigationMode.none && _usesContinuousDayWindow) {
       _settleDayWindow(0, immediate: true);
     }
+    // SF-22: a navigation lock can snap or rotate the buffer. Preserve its
+    // settled position across style/builder resets below, including unlock.
+    final double savedDayWindowPosition = _position;
     if (oldWidget.controller != widget.controller) {
       widget.controller.forward =
           widget.isRTL
@@ -700,7 +722,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     }
 
     // SF-22: retain fractional motion across data/style-only host rebuilds.
-    if (_usesContinuousDayWindow && wasContinuous && !dayWindowGeometryChanged && !dayWindowLockChanged) {
+    if (_usesContinuousDayWindow && wasContinuous && !dayWindowGeometryChanged) {
       _position = savedDayWindowPosition;
     } else if (_usesContinuousDayWindow && dayWindowGeometryChanged) {
       _finishDayWindowConfiguration(resizedDayWindowAnchor ?? _currentViewVisibleDates.first);
@@ -1071,6 +1093,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
 
   @override
   void dispose() {
+    widget.calendar.dayWindowNavigationLocked?.removeListener(_onDayWindowLockChanged);
     // SF-8: deferred publication checks mounted before touching this notifier.
     // SF-22: cancel any pending completion before disposing the ticker.
     _dayWindowGeneration++;
@@ -6142,13 +6165,13 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     }
     // SF-22: take over at the rendered fractional position.
     if (_usesContinuousDayWindow) {
-      if (widget.calendar.viewNavigationMode != ViewNavigationMode.none) {
+      if (_effectiveNavigationMode != ViewNavigationMode.none) {
         widget.removePicker();
         _beginDayWindowDrag();
       }
       return;
     }
-    switch (widget.calendar.viewNavigationMode) {
+    switch (_effectiveNavigationMode) {
       case ViewNavigationMode.none:
         return;
       case ViewNavigationMode.snap:
@@ -6198,12 +6221,12 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
     }
     // SF-22: advance by deltas so rebasing cannot lose pointer travel.
     if (_usesContinuousDayWindow) {
-      if (widget.calendar.viewNavigationMode != ViewNavigationMode.none && _dayWindowDragging) {
+      if (_effectiveNavigationMode != ViewNavigationMode.none && _dayWindowDragging) {
         _applyDayWindowTravel(_dayWindowTravel + dragUpdateDetails.delta.dx);
       }
       return;
     }
-    switch (widget.calendar.viewNavigationMode) {
+    switch (_effectiveNavigationMode) {
       case ViewNavigationMode.none:
         return;
       case ViewNavigationMode.snap:
@@ -6289,7 +6312,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       }
       return;
     }
-    switch (widget.calendar.viewNavigationMode) {
+    switch (_effectiveNavigationMode) {
       case ViewNavigationMode.none:
         return;
       case ViewNavigationMode.snap:
@@ -6456,7 +6479,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       );
       return;
     }
-    switch (widget.calendar.viewNavigationMode) {
+    switch (_effectiveNavigationMode) {
       case ViewNavigationMode.none:
         return;
       case ViewNavigationMode.snap:
@@ -6498,7 +6521,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       );
       return;
     }
-    switch (widget.calendar.viewNavigationMode) {
+    switch (_effectiveNavigationMode) {
       case ViewNavigationMode.none:
         return;
       case ViewNavigationMode.snap:
@@ -6569,7 +6592,7 @@ class _CustomCalendarScrollViewState extends State<CustomCalendarScrollView>
       );
       return;
     }
-    switch (widget.calendar.viewNavigationMode) {
+    switch (_effectiveNavigationMode) {
       case ViewNavigationMode.none:
         return;
       case ViewNavigationMode.snap:
