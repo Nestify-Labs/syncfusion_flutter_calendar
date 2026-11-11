@@ -13123,6 +13123,17 @@ class _AgendaDateTimePainter extends CustomPainter {
                 color: todayTextStyleColor,
               )
               : dateTextStyle.copyWith(color: todayTextStyleColor);
+    } else if (selectedDate!.weekday >= DateTime.saturday) {
+      // SF-23: Schedule weekend colors apply to date-header text only.
+      final DayHeaderSettings? header = scheduleViewSettings?.dayHeaderSettings;
+      final Color? dayColor = header?.weekendDayTextColor;
+      final Color? dateColor = header?.weekendDateTextColor;
+      if (dayColor != null) {
+        dayTextStyle = dayTextStyle.copyWith(color: dayColor);
+      }
+      if (dateColor != null) {
+        dateTextStyle = dateTextStyle.copyWith(color: dateColor);
+      }
     }
 
     /// Draw day label other than web schedule view.

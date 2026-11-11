@@ -38,6 +38,8 @@ class ViewHeaderStyle with Diagnosticable {
   const ViewHeaderStyle({
     this.backgroundColor,
     this.dateTextStyle,
+    this.weekendDayTextColor,
+    this.weekendDateTextColor,
     this.dayTextStyle,
   });
 
@@ -134,6 +136,13 @@ class ViewHeaderStyle with Diagnosticable {
   /// ```
   final TextStyle? dayTextStyle;
 
+  // SF-23: Optional weekend text colors for time-slot date headers.
+  /// Weekday-label color for Saturdays and Sundays, except today.
+  final Color? weekendDayTextColor;
+
+  /// Date-number color for Saturdays and Sundays, except today.
+  final Color? weekendDateTextColor;
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -149,7 +158,9 @@ class ViewHeaderStyle with Diagnosticable {
     }
     return otherStyle.backgroundColor == backgroundColor &&
         otherStyle.dayTextStyle == dayTextStyle &&
-        otherStyle.dateTextStyle == dateTextStyle;
+        otherStyle.dateTextStyle == dateTextStyle &&
+        otherStyle.weekendDayTextColor == weekendDayTextColor &&
+        otherStyle.weekendDateTextColor == weekendDateTextColor;
   }
 
   @override
@@ -162,10 +173,18 @@ class ViewHeaderStyle with Diagnosticable {
       DiagnosticsProperty<TextStyle>('dateTextStyle', dateTextStyle),
     );
     properties.add(ColorProperty('backgroundColor', backgroundColor));
+    properties.add(ColorProperty('weekendDayTextColor', weekendDayTextColor));
+    properties.add(ColorProperty('weekendDateTextColor', weekendDateTextColor));
   }
 
   @override
   int get hashCode {
-    return Object.hash(backgroundColor, dayTextStyle, dateTextStyle);
+    return Object.hash(
+      backgroundColor,
+      dayTextStyle,
+      dateTextStyle,
+      weekendDayTextColor,
+      weekendDateTextColor,
+    );
   }
 }

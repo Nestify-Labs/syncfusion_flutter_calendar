@@ -1034,6 +1034,8 @@ class DayHeaderSettings with Diagnosticable {
     this.width = -1,
     this.dayTextStyle,
     this.dateTextStyle,
+    this.weekendDayTextColor,
+    this.weekendDateTextColor,
   }) : assert(width >= -1);
 
   /// Formats the day text in the day label of [SfCalendar] schedule view.
@@ -1180,6 +1182,13 @@ class DayHeaderSettings with Diagnosticable {
   /// ```
   final TextStyle? dateTextStyle;
 
+  // SF-23: Optional weekend text colors for Schedule date headers.
+  /// Weekday-label color for Saturdays and Sundays, except today.
+  final Color? weekendDayTextColor;
+
+  /// Date-number color for Saturdays and Sundays, except today.
+  final Color? weekendDateTextColor;
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1196,7 +1205,9 @@ class DayHeaderSettings with Diagnosticable {
     return otherStyle.dayFormat == dayFormat &&
         otherStyle.width == width &&
         otherStyle.dayTextStyle == dayTextStyle &&
-        otherStyle.dateTextStyle == dateTextStyle;
+        otherStyle.dateTextStyle == dateTextStyle &&
+        otherStyle.weekendDayTextColor == weekendDayTextColor &&
+        otherStyle.weekendDateTextColor == weekendDateTextColor;
   }
 
   @override
@@ -1210,10 +1221,19 @@ class DayHeaderSettings with Diagnosticable {
     );
     properties.add(DoubleProperty('width', width));
     properties.add(StringProperty('dayFormat', dayFormat));
+    properties.add(ColorProperty('weekendDayTextColor', weekendDayTextColor));
+    properties.add(ColorProperty('weekendDateTextColor', weekendDateTextColor));
   }
 
   @override
   int get hashCode {
-    return Object.hash(dayFormat, width, dayTextStyle, dateTextStyle);
+    return Object.hash(
+      dayFormat,
+      width,
+      dayTextStyle,
+      dateTextStyle,
+      weekendDayTextColor,
+      weekendDateTextColor,
+    );
   }
 }

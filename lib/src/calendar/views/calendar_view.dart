@@ -14667,6 +14667,17 @@ class _ViewHeaderViewPainter extends CustomPainter {
       } else {
         dayTextStyle = viewHeaderDayStyle;
         dateTextStyle = viewHeaderDateStyle;
+        // SF-23: Tint date-header text after honoring today.
+        if (currentDate.weekday >= DateTime.saturday) {
+          final Color? dayColor = viewHeaderStyle.weekendDayTextColor;
+          final Color? dateColor = viewHeaderStyle.weekendDateTextColor;
+          if (dayColor != null) {
+            dayTextStyle = dayTextStyle.copyWith(color: dayColor);
+          }
+          if (dateColor != null) {
+            dateTextStyle = dateTextStyle.copyWith(color: dateColor);
+          }
+        }
       }
 
       if (!isDateWithInDateRange(minDate, maxDate, currentDate)) {
