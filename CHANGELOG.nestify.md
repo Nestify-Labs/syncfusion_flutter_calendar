@@ -2,6 +2,10 @@
 
 This file tracks Nestify-specific releases of the `syncfusion_flutter_calendar` fork. See `CHANGELOG.md` for the upstream Syncfusion changelog and `PATCHES.md` for the patch list.
 
+## v33.2.8+nestify.30
+
+- SF-6 (#4538): use the lane allocator's minimum-duration interval when expanding timed cards, preserving separate midnight instant/overnight cards and matching their tap targets.
+
 ## v33.2.8+nestify.29 (unreleased)
 
 - SF-23 (#4371): add optional weekend text colors to time-slot and Schedule date headers. Today keeps its normal highlight.

@@ -1138,7 +1138,8 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
     CalendarAppointment appointment,
   ) {
     final DateTime aStart = appointment.actualStartTime;
-    final DateTime aEnd = appointment.actualEndTime;
+    // SF-6 (#4538): match the lane allocator's minimum-duration interval.
+    final DateTime aEnd = _cascadeEffectiveEnd(appointment);
     final int basePosition = view.position;
     final int maxPositions = view.maxPositions;
 
@@ -1159,7 +1160,7 @@ class _AppointmentLayoutState extends State<AppointmentLayout> {
         aStart,
         aEnd,
         otherApp.actualStartTime,
-        otherApp.actualEndTime,
+        _cascadeEffectiveEnd(otherApp),
       )) {
         continue;
       }
